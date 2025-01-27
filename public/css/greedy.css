@@ -1,0 +1,27 @@
+.mainscreen{
+    background-image: url('/game/greedy/bg-wooden.png') !important;
+    background-size: cover;
+}
+.wheeldiv{
+    width: 360px;
+    height: 360px;
+    /* background-color: lightgray; */
+    border-radius: 50%;
+    display: flex;
+    position: relative;
+    justify-content: center;
+    align-items: center;
+}
+
+.number {
+    position: absolute;
+    text-align: center;
+    transform: rotate(calc(45deg * var(--n)));
+    inset: 40px;
+    /* background-color: green; */
+}
+
+.number div{
+    transform: rotate(calc(-45deg * var(--n)));
+    display: inline-block;
+}

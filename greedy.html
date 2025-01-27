@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>This is greedy</title>
+    <!-- <link rel="stylesheet" href="/js/socket.io.min.js"> -->
+    <script src="/js/socket.io.min.js"></script>
+</head>
+
+<body>
+
+    <div>
+        <h1 id="heading"></h1>
+    </div>
+
+
+    <script>
+        const token = "eyJhbGciOiJSUzI1NiIsImtpZCI6ImE3MWI1MTU1MmI0ODA5OWNkMGFkN2Y5YmZlNGViODZiMDM5NmUxZDEiLCJ0eXAiOiJKV1QifQ.eyJuYW1lIjoiQXBwcyBEZXZlbG9wZXIiLCJwaWN0dXJlIjoiaHR0cHM6Ly9saDMuZ29vZ2xldXNlcmNvbnRlbnQuY29tL2EvQUNnOG9jSkVqZGVzZDJRak4tSjhldmFzTFpqV3VuRlhQT2l0WXpYd0NlTmltZUNVaS00em9nPXM5Ni1jIiwiaXNzIjoiaHR0cHM6Ly9zZWN1cmV0b2tlbi5nb29nbGUuY29tL2NpdHlsaXZlLTg2MDRlIiwiYXVkIjoiY2l0eWxpdmUtODYwNGUiLCJhdXRoX3RpbWUiOjE3MzUwNDQzNDEsInVzZXJfaWQiOiJRRkY1ZnEyMzdOZmtCR2gzTEE0a2VyR0xOWTAyIiwic3ViIjoiUUZGNWZxMjM3TmZrQkdoM0xBNGtlckdMTlkwMiIsImlhdCI6MTczNTU2MTI5MiwiZXhwIjoxNzM1NTY0ODkyLCJlbWFpbCI6IndlYmRldmVsb3BtZW50Y291cnNlZHJpdmVAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImZpcmViYXNlIjp7ImlkZW50aXRpZXMiOnsiZ29vZ2xlLmNvbSI6WyIxMTQ4NzIxNzQwOTk4MTU5OTQ0MzEiXSwiZW1haWwiOlsid2ViZGV2ZWxvcG1lbnRjb3Vyc2Vkcml2ZUBnbWFpbC5jb20iXX0sInNpZ25faW5fcHJvdmlkZXIiOiJnb29nbGUuY29tIn19.ULzCt5pCZIH94Wog1PUz87M0wInrltsszW1_TsxwK6eW7mncp1vurSnRNjfbxyujanI_PKzfbjRqLg46fYvrwCw72BpzZ2kYNtQdK-jmbWlqxqb7QDGBRdkPh1GsYq9UmUXyrOODjGeDqdqreLpwbdc1_yNO-ymszFoGU4yCeC7";
+        const socket = io({
+            auth: {
+                token: token
+            }
+        });
+        socket.on("connect", () => {
+            console.log(socket.id); // x8WIv7-mJelg7on_ALbx
+        });
+
+        socket.on('game', (message) => {
+            // console.log('message asce', message);
+            document.getElementById('heading').innerHTML = message;
+        });
+    </script>
+</body>
+
+</html>
