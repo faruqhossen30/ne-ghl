@@ -166,7 +166,7 @@ const updateValueInRedis = async () => {
       clearInterval(greedyInterval);
 
       // setTimeout(async () => {
-      currentObject.selectTime = 10;
+      currentObject.selectTime = 30;
       currentObject.resultTime = 0;
       currentObject.select = true;
       currentObject.result = false;
