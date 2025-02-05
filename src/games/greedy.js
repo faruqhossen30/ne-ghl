@@ -46,7 +46,7 @@ const selectTimeEmitUpdate = async () => {
 
     greedy.emit("result", JSON.stringify(currentObject), resultUsers ?? [], winRecords);
 
-    currentObject.selectTime = 15;
+    currentObject.selectTime = 30;
     currentObject.winOption = 0;
     currentObject.round = currentObject.round + 1;
     await redisClient.set("greedyObj", JSON.stringify(currentObject));
