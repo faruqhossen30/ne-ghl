@@ -8,13 +8,6 @@ const mysql = require("mysql2");
 const { Random, pick } = require("random-js");
 
 // Config file
-const mysqlPool = mysql.createPool({
-  host: "localhost",
-  user: "root",
-  database: "honeylive",
-  password: "",
-});
-
 const { FieldValue } = require("firebase-admin/firestore");
 const { redisClient, radisURL } = require("./config/redis");
 const { app, express, server } = require("./config/server");
@@ -22,7 +15,9 @@ const { io } = require("./config/socket");
 const { greedyObj } = require("./src/games/greedy");
 const { luckyWheelObj } = require("./src/games/luckywheel");
 const greddyGenerateWInPtion = require("./utils/greedyGenerateWinOption");
-const gameOptiondData = require("./data/greedyOptions");
+const { mysqlPool } = require("./config/db");
+const { db } = require("./config/firebaseDB");
+
 // Games File
 require("./src/games/greedy");
 
@@ -68,9 +63,9 @@ app.get("/", async (req, res) => {
 
         mysqlPool.query(
           "select * from `bets` WHERE DATE(created_at) = CURDATE() and `round` = ? and `status` = ? and `game_id` = ?",
-          [2, "loss",1],
+          [2, "loss", 1],
           function (err, result, fields) {
-            console.log(result.map((item)=> item.user_id));
+            console.log(result.map((item) => item.user_id));
 
             res.send(result);
           }
@@ -151,6 +146,51 @@ app.get("/", async (req, res) => {
   // res.send('gfgh');
 });
 
+app.get("/query", async (req, res) => {
+  const [rows, fields] = await mysqlPool.query(
+    "select * from `bets` WHERE DATE(created_at) = CURDATE() and `round` = ? and `status` = ? and `game_id` = ?",
+    [2, "loss", 1]
+  );
+  // console.log("log first 2");
+
+  // Fetch user data from Firestore
+  const userPromises = rows.map(async (item) => {
+    const userDoc = await db.collection("users").doc(item.user_uid).get();
+    return userDoc.exists ? { a: item.bet_amount * item.rate, ...userDoc.data() } : null;
+  });
+  console.log(userPromises);
+  
+  const usersData = await Promise.all(userPromises);
+
+  res.send(usersData);
+
+  // const uniqUserIds = [...new Set(userIds)];
+
+  // const usersRef = db.collection("users");
+  // const snapshot = await usersRef.where("uid", "in", userIds).get();
+
+  // if (snapshot.empty) {
+  //   return res.status(404).json({ message: "No users found" });
+  // }
+
+  // let users = [];
+  // snapshot.forEach((doc) => {
+  //   users.push({ id: doc.id, ...doc.data() });
+  // });
+  // const finalDat = uniqUserIds.map((item)=>{
+  //   return {id: 1,amount: item.bet_amount};
+  // })
+
+  // res.send(finalDat)
+
+  // console.log(userIds);
+
+  // res.send(users);
+});
+
+app.get("/test", async (req, res) => {
+  res.send("serveris working");
+});
 server.listen(3000, async () => {
   await redisClient.connect(radisURL).then(() => {
     console.log("redis connect");
@@ -159,5 +199,5 @@ server.listen(3000, async () => {
   redisClient.set("greedyObj", JSON.stringify(greedyObj));
   redisClient.set("luckyWheelObj", JSON.stringify(luckyWheelObj));
 
-  console.log("listening on http://192.168.0.112:3000");
+  console.log(`server running ${process.env.APP_URL}`);
 });

@@ -22,45 +22,29 @@ const selectTimeEmitUpdate = async () => {
   const roundNumber = currentObject.round;
   const gameId = 1;
   const CURRENT_TIMESTAMP = mysql.raw("CURRENT_TIMESTAMP()");
-  // console.log("selectTimeEmitUpdate running ...");
 
   // display result emit
   if (currentObject.selectTime <= 0) {
     stopSelectTimeInter();
-    // send winder user list
-    // send win option list
-
-    
-
     // 3. Winer get diamond update by firebase
-    let winUsers = [];
-    mysqlPool.query(
+    const [rows] = await mysqlPool.query(
       "select * from `bets` WHERE DATE(created_at) = CURDATE() and `round` = ? and `status` = ? and `game_id` = ?",
-      [roundNumber, "win", gameId],
-      async function (err, rows, fields) {
-        rows.map(async (data) => {
-          let winUser = await {};
-          const userRef = await db.collection("users").doc(data.user_uid);
-          const docSnap = await userRef.get();
-          const userData = await docSnap.data();
-          const res = await userRef.update({
-            diamond: FieldValue.increment(data.bet_amount * data.rate),
-          });
-          winUsers.push(userData.name)
-          console.log(userData.name);
-          
-          
-          // console.log('user id = ',data.user_id, "pabe -", data.bet_amount * data.rate);
-          // console.log("this is data", data);
-        });
-        console.log('winUsers ind',winUsers);
-      }      
+      [roundNumber, "win", gameId]
     );
 
-    console.log('winUsers',winUsers);
-    
+    // Fetch user data from Firestore
+    const userPromises = await rows.map(async (item) => {
+      const userDoc = await db.collection("users").doc(item.user_uid).get();
+      return userDoc.exists
+        ? { wind_amount: item.bet_amount * item.rate, ...userDoc.data() }
+        : null;
+    });
 
-    greedy.emit("result", JSON.stringify(currentObject),winUsers);
+    const resultUsers = await Promise.all(userPromises);
+    // const [winRecords] = await mysqlPool.query("select * from `win_options` where `game_id` = 1 order by `created_at` desc limit 3");
+    const [winRecords] = await mysqlPool.query("SELECT win_options.*, game_options.id,game_options.name,game_options.img FROM win_options LEFT JOIN game_options ON win_options.option_id = game_options.id WHERE win_options.game_id = 1 ORDER BY win_options.created_at DESC LIMIT 8");
+
+    greedy.emit("result", JSON.stringify(currentObject), resultUsers ?? [], winRecords);
 
     currentObject.selectTime = 15;
     currentObject.winOption = 0;
@@ -68,7 +52,7 @@ const selectTimeEmitUpdate = async () => {
     await redisClient.set("greedyObj", JSON.stringify(currentObject));
     setTimeout(async () => {
       startSelectTimeInterval();
-    }, 3000);
+    }, 5000);
   } else if (currentObject.selectTime == 6) {
     stopSelectTimeInter();
     currentObject.selectTime = currentObject.selectTime - 1;
@@ -76,77 +60,74 @@ const selectTimeEmitUpdate = async () => {
     // currentObject.winOption = 7;
 
     // start
-    mysqlPool.query(
-      "select sum(`bet_amount`) as bet_amount, sum(CASE WHEN status = 'win' THEN bet_amount * rate ELSE NULL END) as win_amount from `bets` WHERE DATE(created_at) = CURDATE()",
-      function (err, result, fields) {
-        const { bet_amount, win_amount } = result[0];
-        const stock_amount = bet_amount - win_amount;
-        const commission_amount = ((bet_amount - win_amount) / 100) * 10;
-        const payable_amount = stock_amount - commission_amount;
+    const [rows] = await mysqlPool.query(
+      "SELECT SUM(`bet_amount`) AS bet_amount, SUM(CASE WHEN status = 'win' THEN bet_amount * rate ELSE NULL END) AS win_amount FROM `bets` WHERE DATE(created_at) = CURDATE()"
+    );
 
-        // console.log("stock_amount", stock_amount);
-        // console.log("commission_amount", commission_amount);
-        // console.log("payable_amount", payable_amount);
+    const { bet_amount, win_amount } = rows[0] || {
+      bet_amount: 0,
+      win_amount: 0,
+    }; // Default values to avoid undefined errors
 
-        // Round query
-        mysqlPool.query(
-          "SELECT option_id,sum(bet_amount*rate) as total FROM `bets` WHERE DATE(created_at) = CURDATE() and status = ? and `round` = ? GROUP BY option_id;",
-          ["pending", roundNumber],
-          async function (err, result, fields) {
-            // if found submitted bets
-            if (result.length) {
-              let testArr = [];
-              result.map(async (bet) => {
-                if (bet.total <= payable_amount) {
-                  testArr.push(bet.option_id);
-                }
-              });
+    const stock_amount = bet_amount - win_amount; // Fixing incorrect variable usage
+    const commission_amount = (stock_amount / 100) * 10;
+    const payable_amount = stock_amount - commission_amount;
 
-              // if not found payable option
-              if (testArr.length == 0) {
-                const beted_ids = result.map((item)=> item.option_id)             
-                testArr = [1,2,3,4,5,6,7,8].filter(item => !beted_ids.includes(item));               
-              }
+    // Fetch round bets and process winners
+    const roundQuery = await mysqlPool.query(
+      "SELECT option_id, SUM(bet_amount * rate) AS total FROM `bets` WHERE DATE(created_at) = CURDATE() AND status = ? AND `round` = ? GROUP BY option_id",
+      ["pending", roundNumber]
+    );
 
-              const win_option =
-                (await testArr[Math.floor(Math.random() * testArr.length)]) ??
-                [2, 3, 4, 5][Math.floor(Math.random() * 4)];
+    if (roundQuery.length) {
+      let testArr = [];
 
-              console.log("win_option 99 ", win_option);
+      // Collect valid option_ids that fit within payable_amount
+      roundQuery.forEach((bet) => {
+        if (bet.total <= payable_amount) {
+          testArr.push(bet.option_id);
+        }
+      });
 
-              // 1. change status - pending-loss
-              mysqlPool.query(
-                "update `bets` set `status` = ?, `bets`.`updated_at` = ? where `game_id` = ? and `round` = ? and not `option_id` = ?",
-                ["loss", CURRENT_TIMESTAMP, gameId, roundNumber, win_option],
-                function (err, result, fields) {
-                  // console.log('this is 1',err);
-                }
-              );
-
-              // 2. change status - pending-win
-              mysqlPool.query(
-                "update `bets` set `status` = ?, `bets`.`updated_at` = ? where `game_id` = ? and `round` = ? and `option_id` = ?",
-                ["win", CURRENT_TIMESTAMP, gameId, roundNumber, win_option],
-                function (err, result, fields) {
-                  // console.log('this is 2',err);
-                }
-              );
-              currentObject.winOption = win_option;
-              await redisClient.set("greedyObj", JSON.stringify(currentObject));
-            }
-
-            // if not bet submited
-            if (result.length == 0) {
-              currentObject.winOption = [1, 6, 7, 8][
-                Math.floor(Math.random() * 4)
-              ];
-              await redisClient.set("greedyObj", JSON.stringify(currentObject));
-            }
-          }
+      // If no payable option is found, select an alternative set
+      if (testArr.length === 0) {
+        const beted_ids = roundQuery.map((item) => item.option_id);
+        testArr = [1, 2, 3, 4, 5, 6, 7, 8].filter(
+          (item) => !beted_ids.includes(item)
         );
       }
-    );
-    // end
+
+      // Randomly select a winning option
+      const win_option = testArr.length
+        ? testArr[Math.floor(Math.random() * testArr.length)]
+        : [2, 3, 4, 5][Math.floor(Math.random() * 4)];
+
+      console.log("Win option:", win_option);
+
+      // 1. Update status of non-winning bets to "loss"
+      await mysqlPool.query(
+        "UPDATE `bets` SET `status` = ?, `updated_at` = ? WHERE `game_id` = ? AND `round` = ? AND `option_id` != ?",
+        ["loss", new Date(), gameId, roundNumber, win_option]
+      );
+
+      // 2. Update status of winning bets to "win"
+      await mysqlPool.query(
+        "UPDATE `bets` SET `status` = ?, `updated_at` = ? WHERE `game_id` = ? AND `round` = ? AND `option_id` = ?",
+        ["win", new Date(), gameId, roundNumber, win_option]
+      );
+
+      // 3. Store laste win option
+      await mysqlPool.query(
+        "INSERT INTO `win_options`(`game_id`, `option_id`, `round`, `submited`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?)",
+        [1,win_option,roundNumber,testArr.length ? true : false, new Date(),new Date()]
+      );
+      currentObject.winOption = win_option;
+      await redisClient.set("greedyObj", JSON.stringify(currentObject));
+    } else {
+      // If no bets were submitted, choose a random fallback win option
+      currentObject.winOption = [1, 6, 7, 8][Math.floor(Math.random() * 4)];
+      await redisClient.set("greedyObj", JSON.stringify(currentObject));
+    }
 
     await redisClient.set("greedyObj", JSON.stringify(currentObject));
     greedy.emit("game", JSON.stringify(currentObject));
