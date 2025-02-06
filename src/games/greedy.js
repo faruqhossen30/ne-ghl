@@ -26,6 +26,7 @@ const selectTimeEmitUpdate = async () => {
   // display result emit
   if (currentObject.selectTime <= 0) {
     stopSelectTimeInter();
+
     // 3. Winer get diamond update by firebase
     const [rows] = await mysqlPool.query(
       "select * from `bets` WHERE DATE(created_at) = CURDATE() and `round` = ? and `status` = ? and `game_id` = ?",
@@ -34,6 +35,13 @@ const selectTimeEmitUpdate = async () => {
 
     // Fetch user data from Firestore
     const userPromises = await rows.map(async (item) => {
+      // add diamond start
+      const userRef = await db.collection("users").doc(item.user_uid);
+      const res = await userRef.update({
+        diamond: FieldValue.increment(item.bet_amount * item.rate),
+      });
+      // add diamond end
+
       const userDoc = await db.collection("users").doc(item.user_uid).get();
       return userDoc.exists
         ? { wind_amount: item.bet_amount * item.rate, ...userDoc.data() }
@@ -42,9 +50,16 @@ const selectTimeEmitUpdate = async () => {
 
     const resultUsers = await Promise.all(userPromises);
     // const [winRecords] = await mysqlPool.query("select * from `win_options` where `game_id` = 1 order by `created_at` desc limit 3");
-    const [winRecords] = await mysqlPool.query("SELECT win_options.*, game_options.id,game_options.name,game_options.img FROM win_options LEFT JOIN game_options ON win_options.option_id = game_options.id WHERE win_options.game_id = 1 ORDER BY win_options.created_at DESC LIMIT 8");
+    const [winRecords] = await mysqlPool.query(
+      "SELECT win_options.*, game_options.id,game_options.name,game_options.img FROM win_options LEFT JOIN game_options ON win_options.option_id = game_options.id WHERE win_options.game_id = 1 ORDER BY win_options.created_at DESC LIMIT 8"
+    );
 
-    greedy.emit("result", JSON.stringify(currentObject), resultUsers ?? [], winRecords);
+    greedy.emit(
+      "result",
+      JSON.stringify(currentObject),
+      resultUsers ?? [],
+      winRecords
+    );
 
     currentObject.selectTime = 30;
     currentObject.winOption = 0;
@@ -119,7 +134,14 @@ const selectTimeEmitUpdate = async () => {
       // 3. Store laste win option
       await mysqlPool.query(
         "INSERT INTO `win_options`(`game_id`, `option_id`, `round`, `submited`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?)",
-        [1,win_option,roundNumber,testArr.length ? true : false, new Date(),new Date()]
+        [
+          1,
+          win_option,
+          roundNumber,
+          testArr.length ? true : false,
+          new Date(),
+          new Date(),
+        ]
       );
       currentObject.winOption = win_option;
       await redisClient.set("greedyObj", JSON.stringify(currentObject));
