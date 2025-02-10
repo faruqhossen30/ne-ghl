@@ -1,11 +1,12 @@
 const mysql = require("mysql2");
+const { FieldValue, AggregateField } = require("firebase-admin/firestore");
 const { clearInterval } = require("timers");
 const { redisClient } = require("../../config/redis");
 const { io } = require("../../config/socket");
 const { mysqlPool } = require("../../config/db");
 const { db } = require("../../config/firebaseDB");
-const { FieldValue } = require("firebase-admin/firestore");
 const gameOptiondData = require("../../data/greedyOptions");
+const { startTimestamp, endTimestamp } = require("../../utils/dateGenerate");
 
 const greedy = io.of("/greedy");
 
@@ -14,52 +15,46 @@ const greedyObj = {
   winOption: 0,
   round: 1,
 };
+const greedyWinRecourds = [1, 2, 3, 4, 5, 6, 7, 8];
 
 const selectTimeEmitUpdate = async () => {
   const redisValue = await redisClient.get("greedyObj");
   const currentObject = await JSON.parse(redisValue);
-
   const roundNumber = currentObject.round;
-  const gameId = 1;
-  const CURRENT_TIMESTAMP = mysql.raw("CURRENT_TIMESTAMP()");
 
   // display result emit
   if (currentObject.selectTime <= 0) {
     stopSelectTimeInter();
 
-    // 3. Winer get diamond update by firebase
-    const [rows] = await mysqlPool.query(
-      "select * from `bets` WHERE DATE(created_at) = CURDATE() and `round` = ? and `status` = ? and `game_id` = ?",
-      [roundNumber, "win", gameId]
-    );
+    const greediesRef = db.collection("greedies");
+    const snapshot = await greediesRef
+      .where("createdAt", ">=", startTimestamp)
+      .where("createdAt", "<=", endTimestamp)
+      .where("round", "==", roundNumber)
+      .where("status", "==", "win")
+      .get();
+    // 2.2 winer user and win amount list
+    const resultUsers = [];
+    if (!snapshot.empty) {
+      let batch = db.batch();
+      snapshot.forEach((doc) => {
+        console.log(doc.data());
 
-    // Fetch user data from Firestore
-    const userPromises = await rows.map(async (item) => {
-      // add diamond start
-      const userRef = await db.collection("users").doc(item.user_uid);
-      const res = await userRef.update({
-        diamond: FieldValue.increment(item.bet_amount * item.rate),
+        const betData = doc.data();
+        resultUsers.push({
+          wind_amount: betData.betAmount * betData.rate,
+          ...betData,
+        });
+        batch.update(betData.userRef, {
+          diamond: FieldValue.increment(betData.betAmount * betData.rate),
+        });
       });
-      // add diamond end
+      await batch.commit();
+    }
+    const redisWinRecords = await redisClient.get("greedyWinRecourds");
+    const winRecords = await JSON.parse(redisWinRecords);
 
-      const userDoc = await db.collection("users").doc(item.user_uid).get();
-      return userDoc.exists
-        ? { wind_amount: item.bet_amount * item.rate, ...userDoc.data() }
-        : null;
-    });
-
-    const resultUsers = await Promise.all(userPromises);
-    // const [winRecords] = await mysqlPool.query("select * from `win_options` where `game_id` = 1 order by `created_at` desc limit 3");
-    const [winRecords] = await mysqlPool.query(
-      "SELECT win_options.*, game_options.id,game_options.name,game_options.img FROM win_options LEFT JOIN game_options ON win_options.option_id = game_options.id WHERE win_options.game_id = 1 ORDER BY win_options.created_at DESC LIMIT 8"
-    );
-
-    greedy.emit(
-      "result",
-      JSON.stringify(currentObject),
-      resultUsers ?? [],
-      winRecords
-    );
+    greedy.emit("result", JSON.stringify(currentObject), resultUsers ?? [], winRecords);
 
     currentObject.selectTime = 30;
     currentObject.winOption = 0;
@@ -71,84 +66,146 @@ const selectTimeEmitUpdate = async () => {
   } else if (currentObject.selectTime == 6) {
     stopSelectTimeInter();
     currentObject.selectTime = currentObject.selectTime - 1;
-    // Result Processing start
-    // currentObject.winOption = 7;
 
-    // start
-    const [rows] = await mysqlPool.query(
-      "SELECT SUM(`bet_amount`) AS bet_amount, SUM(CASE WHEN status = 'win' THEN bet_amount * rate ELSE NULL END) AS win_amount FROM `bets` WHERE DATE(created_at) = CURDATE()"
-    );
+    // copy start
+    // const collectionRef = db.collection("greedies");
+    // 1.1 get total beted amount
+    const coll = await db
+      .collection("greedies")
+      .where("createdAt", ">=", startTimestamp)
+      .where("createdAt", "<=", endTimestamp);
+    const sumAggregateQuery = await coll.aggregate({
+      totalBetAmount: AggregateField.sum("betAmount"),
+    });
 
-    const { bet_amount, win_amount } = rows[0] || {
-      bet_amount: 0,
-      win_amount: 0,
-    }; // Default values to avoid undefined errors
+    const snapshot = await sumAggregateQuery.get();
+    const totalBetAmount = await snapshot.data().totalBetAmount;
 
-    const stock_amount = bet_amount - win_amount; // Fixing incorrect variable usage
-    const commission_amount = (stock_amount / 100) * 10;
-    const payable_amount = stock_amount - commission_amount;
+    // 1.2 get total win amount
+    const totalWinCollectionRef = db
+      .collection("greedies")
+      .where("createdAt", ">=", startTimestamp)
+      .where("createdAt", "<=", endTimestamp)
+      .where("status", "==", "win");
 
-    // Fetch round bets and process winners
-    const roundQuery = await mysqlPool.query(
-      "SELECT option_id, SUM(bet_amount * rate) AS total FROM `bets` WHERE DATE(created_at) = CURDATE() AND status = ? AND `round` = ? GROUP BY option_id",
-      ["pending", roundNumber]
-    );
+    const sumWinAggregateQuery = await totalWinCollectionRef.aggregate({
+      totalBetAmount: AggregateField.sum("betAmount"),
+    });
 
-    if (roundQuery.length) {
+    const totalWinAmountSnapshot = await sumWinAggregateQuery.get();
+    const totalWinAmount = await totalWinAmountSnapshot.data().totalBetAmount;
+
+    // 1.3 calculating
+    const stockAmount = totalBetAmount - totalWinAmount;
+    const commissionAmount = (stockAmount / 100) * 10;
+    const payableAmount = stockAmount - commissionAmount;
+
+    const data = {
+      stockAmount: stockAmount,
+      commissionAmount: commissionAmount,
+      payableAmount: payableAmount,
+    };
+
+    // Fetch documents round bets and process for winners
+    // 1.4
+    const singleRoundQuery = await db
+      .collection("greedies")
+      .where("createdAt", ">=", startTimestamp)
+      .where("createdAt", "<=", endTimestamp)
+      .where("round", "==", roundNumber)
+      .get();
+
+    if (singleRoundQuery.empty) {
+      // If no bets were submitted, choose a random fallback win option
+      const win_option = [1, 6, 7, 8][Math.floor(Math.random() * 4)];
+      currentObject.winOption = win_option;
+
+      // for generate winrecourd option
+      const redisWinRecords = await redisClient.get("greedyWinRecourds");
+      const redisWinRecordsArr = await JSON.parse(redisWinRecords);
+      await redisWinRecordsArr.unshift(win_option);
+      await redisWinRecordsArr.pop();
+      await redisClient.set(
+        "greedyWinRecourds",
+        JSON.stringify(redisWinRecordsArr)
+      );
+
+      console.log("singleRoundQuery is empty");
+    }
+
+    if (!singleRoundQuery.empty) {
+      // document to json data
+      const items = singleRoundQuery.docs.map((item) => {
+        const itemData = item.data();
+        let totalReturnAmount = item.data();
+        return {
+          id: item.id,
+          round: itemData.round,
+          optionId: itemData.optionId,
+          betAmount: itemData.betAmount,
+          rate: itemData.rate,
+          returnAmount: itemData.betAmount * itemData.rate,
+        };
+      });
+      // Json data to uniq with groupby data
+      const uniqueData = Object.values(
+        items.reduce((acc, item) => {
+          if (!acc[item.optionId]) {
+            acc[item.optionId] = { ...item, total: 0 };
+          }
+          acc[item.optionId].total += item.betAmount * item.rate;
+          return acc;
+        }, {})
+      );
+
+      // Collect valid optionId that fit within payableAmount
       let testArr = [];
-
-      // Collect valid option_ids that fit within payable_amount
-      roundQuery.forEach((bet) => {
-        if (bet.total <= payable_amount) {
-          testArr.push(bet.option_id);
+      uniqueData.forEach((bet) => {
+        if (bet.total <= payableAmount) {
+          testArr.push(bet.optionId);
         }
       });
 
       // If no payable option is found, select an alternative set
       if (testArr.length === 0) {
-        const beted_ids = roundQuery.map((item) => item.option_id);
+        const betedIds = uniqueData.map((item) => item.optionId);
         testArr = [1, 2, 3, 4, 5, 6, 7, 8].filter(
-          (item) => !beted_ids.includes(item)
+          (item) => !betedIds.includes(item)
         );
       }
 
       // Randomly select a winning option
-      const win_option = testArr.length
+      const win_option = (await testArr.length)
         ? testArr[Math.floor(Math.random() * testArr.length)]
         : [2, 3, 4, 5][Math.floor(Math.random() * 4)];
 
       console.log("Win option:", win_option);
 
-      // 1. Update status of non-winning bets to "loss"
-      await mysqlPool.query(
-        "UPDATE `bets` SET `status` = ?, `updated_at` = ? WHERE `game_id` = ? AND `round` = ? AND `option_id` != ?",
-        ["loss", new Date(), gameId, roundNumber, win_option]
-      );
+      // 1. Update status of bets to "loss/win"
+      const singleRoundQueryForUpdate = await db
+        .collection("greedies")
+        .where("createdAt", ">=", startTimestamp)
+        .where("createdAt", "<=", endTimestamp)
+        .where("round", "==", roundNumber)
+        .get();
 
-      // 2. Update status of winning bets to "win"
-      await mysqlPool.query(
-        "UPDATE `bets` SET `status` = ?, `updated_at` = ? WHERE `game_id` = ? AND `round` = ? AND `option_id` = ?",
-        ["win", new Date(), gameId, roundNumber, win_option]
+      let batch = await db.batch();
+      singleRoundQueryForUpdate.forEach((doc) => {
+        const docData = doc.data();
+        batch.update(doc.ref, {
+          status: docData.optionId == win_option ? "win" : "loss",
+        });
+      });
+      await batch.commit();
+      // for generate winrecourd option
+      const redisWinRecords = await redisClient.get("greedyWinRecourds");
+      const redisWinRecordsArr = await JSON.parse(redisWinRecords);
+      await redisWinRecordsArr.unshift(win_option);
+      await redisWinRecordsArr.pop();
+      await redisClient.set(
+        "greedyWinRecourds",
+        JSON.stringify(redisWinRecordsArr)
       );
-
-      // 3. Store laste win option
-      await mysqlPool.query(
-        "INSERT INTO `win_options`(`game_id`, `option_id`, `round`, `submited`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?)",
-        [
-          1,
-          win_option,
-          roundNumber,
-          testArr.length ? true : false,
-          new Date(),
-          new Date(),
-        ]
-      );
-      currentObject.winOption = win_option;
-      await redisClient.set("greedyObj", JSON.stringify(currentObject));
-    } else {
-      // If no bets were submitted, choose a random fallback win option
-      currentObject.winOption = [1, 6, 7, 8][Math.floor(Math.random() * 4)];
-      await redisClient.set("greedyObj", JSON.stringify(currentObject));
     }
 
     await redisClient.set("greedyObj", JSON.stringify(currentObject));
@@ -189,4 +246,4 @@ greedy.on("connection", (socket) => {
   });
 });
 
-module.exports = { greedyObj };
+module.exports = { greedyObj, greedyWinRecourds };
