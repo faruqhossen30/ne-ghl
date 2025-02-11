@@ -34,25 +34,61 @@ const selectTimeEmitUpdate = async () => {
       .where("status", "==", "win")
       .get();
     // 2.2 winer user and win amount list
-    const resultUsers = [];
     if (!snapshot.empty) {
       let batch = db.batch();
       snapshot.forEach((doc) => {
-        console.log(doc.data());
 
         const betData = doc.data();
-        resultUsers.push({
-          wind_amount: betData.betAmount * betData.rate,
-          ...betData,
-        });
         batch.update(betData.userRef, {
-          diamond: FieldValue.increment(betData.betAmount * betData.rate),
+          diamond: FieldValue.increment(betData.returnAmount),
         });
       });
       await batch.commit();
     }
+
+// Result user status
+    const items = await snapshot.docs.map((item) => {
+      const betData = item.data();
+      return betData;
+    });
+  
+    const groupedData = await items.reduce((acc, item) => {
+      if (!acc[item.userId]) {
+        acc[item.userId] = {
+          userId: item.userId,
+          userRef: item.userRef,
+          count: 0,
+          totalReturnAmount: 0,
+        };
+      }
+      acc[item.userId].count += 1;
+      acc[item.userId].totalReturnAmount += item.returnAmount;
+      return acc;
+    }, {});
+  
+    const result = await Object.values(groupedData).sort(
+      (a, b) => b.totalReturnAmount - a.totalReturnAmount
+    );
+  
+    // Fetch user data from Firestore
+    const userPromises = await result.map(async (item) => {
+      const userDoc = await item.userRef.get();
+      const userData = await userDoc.data();
+      return userDoc.exists
+        ? { winAmount: item.totalReturnAmount, name:userData.name,photoURL:userData.photoURL }
+        : null;
+    });
+  
+    const resultUsers = await Promise.all(userPromises);
+    // result user end
+
+
+
+
     const redisWinRecords = await redisClient.get("greedyWinRecourds");
     const winRecords = await JSON.parse(redisWinRecords);
+
+    
 
     greedy.emit("result", JSON.stringify(currentObject), resultUsers ?? [], winRecords);
 
@@ -88,8 +124,9 @@ const selectTimeEmitUpdate = async () => {
       .where("createdAt", "<=", endTimestamp)
       .where("status", "==", "win");
 
+      // Update for fix
     const sumWinAggregateQuery = await totalWinCollectionRef.aggregate({
-      totalBetAmount: AggregateField.sum("betAmount"),
+      totalBetAmount: AggregateField.sum("returnAmount"),
     });
 
     const totalWinAmountSnapshot = await sumWinAggregateQuery.get();
