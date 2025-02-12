@@ -35,23 +35,26 @@ const selectTimeEmitUpdate = async () => {
       .get();
     // 2.2 winer user and win amount list
     if (!snapshot.empty) {
-      let batch = db.batch();
-      snapshot.forEach((doc) => {
-
-        const betData = doc.data();
-        batch.update(betData.userRef, {
-          diamond: FieldValue.increment(betData.returnAmount),
+      try {
+        let batch = db.batch();
+        snapshot.forEach((doc) => {
+          const betData = doc.data();
+          batch.update(betData.userRef, {
+            diamond: FieldValue.increment(betData.returnAmount),
+          });
         });
-      });
-      await batch.commit();
+        await batch.commit();
+      } catch (error) {
+        console.log("2.2 error", error);
+      }
     }
 
-// Result user status
+    // Result user status
     const items = await snapshot.docs.map((item) => {
       const betData = item.data();
       return betData;
     });
-  
+
     const groupedData = await items.reduce((acc, item) => {
       if (!acc[item.userId]) {
         acc[item.userId] = {
@@ -65,32 +68,36 @@ const selectTimeEmitUpdate = async () => {
       acc[item.userId].totalReturnAmount += item.returnAmount;
       return acc;
     }, {});
-  
+
     const result = await Object.values(groupedData).sort(
       (a, b) => b.totalReturnAmount - a.totalReturnAmount
     );
-  
+
     // Fetch user data from Firestore
     const userPromises = await result.map(async (item) => {
       const userDoc = await item.userRef.get();
       const userData = await userDoc.data();
       return userDoc.exists
-        ? { winAmount: item.totalReturnAmount, name:userData.name,photoURL:userData.photoURL }
+        ? {
+            winAmount: item.totalReturnAmount,
+            name: userData.name,
+            photoURL: userData.photoURL,
+          }
         : null;
     });
-  
+
     const resultUsers = await Promise.all(userPromises);
     // result user end
-
-
-
 
     const redisWinRecords = await redisClient.get("greedyWinRecourds");
     const winRecords = await JSON.parse(redisWinRecords);
 
-    
-
-    greedy.emit("result", JSON.stringify(currentObject), resultUsers ?? [], winRecords);
+    greedy.emit(
+      "result",
+      JSON.stringify(currentObject),
+      resultUsers ?? [],
+      winRecords
+    );
 
     currentObject.selectTime = 30;
     currentObject.winOption = 0;
@@ -124,7 +131,7 @@ const selectTimeEmitUpdate = async () => {
       .where("createdAt", "<=", endTimestamp)
       .where("status", "==", "win");
 
-      // Update for fix
+    // Update for fix
     const sumWinAggregateQuery = await totalWinCollectionRef.aggregate({
       totalBetAmount: AggregateField.sum("returnAmount"),
     });
@@ -154,7 +161,9 @@ const selectTimeEmitUpdate = async () => {
 
     if (singleRoundQuery.empty) {
       // If no bets were submitted, choose a random fallback win option
-      const win_option = [1, 6, 7, 8][Math.floor(Math.random() * 4)];
+      const win_option = [1, 2, 3, 4, 5, 6, 7, 8][
+        Math.floor(Math.random() * 4)
+      ];
       currentObject.winOption = win_option;
 
       // for generate winrecourd option
@@ -219,21 +228,27 @@ const selectTimeEmitUpdate = async () => {
       console.log("Win option:", win_option);
 
       // 1. Update status of bets to "loss/win"
+      // update new commit
       const singleRoundQueryForUpdate = await db
         .collection("greedies")
         .where("createdAt", ">=", startTimestamp)
         .where("createdAt", "<=", endTimestamp)
         .where("round", "==", roundNumber)
+        .where("status", "==", "pending")
         .get();
 
       let batch = await db.batch();
-      singleRoundQueryForUpdate.forEach((doc) => {
-        const docData = doc.data();
-        batch.update(doc.ref, {
-          status: docData.optionId == win_option ? "win" : "loss",
+      try {
+        singleRoundQueryForUpdate.forEach((doc) => {
+          const docData = doc.data();
+          batch.update(doc.ref, {
+            status: docData.optionId == win_option ? "win" : "loss",
+          });
         });
-      });
-      await batch.commit();
+        await batch.commit();
+      } catch (error) {
+        console.log("1. update statsu of bets to win/loss", error);
+      }
       // for generate winrecourd option
       const redisWinRecords = await redisClient.get("greedyWinRecourds");
       const redisWinRecordsArr = await JSON.parse(redisWinRecords);
