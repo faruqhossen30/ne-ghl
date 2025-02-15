@@ -27,17 +27,16 @@ const selectTimeEmitUpdate = async () => {
     stopSelectTimeInter();
 
     const greediesRef = db.collection("greedies");
-    const snapshot = await greediesRef
-      .where("createdAt", ">=", startTimestamp)
-      .where("createdAt", "<=", endTimestamp)
+    const winSnapshot = await greediesRef
+      .where("completed", "==", false)
       .where("round", "==", roundNumber)
       .where("status", "==", "win")
       .get();
     // 2.2 winer user and win amount list
-    if (!snapshot.empty) {
+    if (!winSnapshot.empty) {
       try {
         let batch = db.batch();
-        snapshot.forEach((doc) => {
+        winSnapshot.forEach((doc) => {
           const betData = doc.data();
           batch.update(betData.userRef, {
             diamond: FieldValue.increment(betData.returnAmount),
@@ -45,12 +44,12 @@ const selectTimeEmitUpdate = async () => {
         });
         await batch.commit();
       } catch (error) {
-        console.log("2.2 error", error);
+        console.log("2.2 error winner amount increment fail", error);
       }
     }
 
     // Result user status
-    const items = await snapshot.docs.map((item) => {
+    const items = await winSnapshot.docs.map((item) => {
       const betData = item.data();
       return betData;
     });
@@ -115,8 +114,9 @@ const selectTimeEmitUpdate = async () => {
     // 1.1 get total beted amount
     const coll = await db
       .collection("greedies")
-      .where("createdAt", ">=", startTimestamp)
-      .where("createdAt", "<=", endTimestamp);
+      .where("completed", "==", false)
+      .where("status", "!=", "pending");
+
     const sumAggregateQuery = await coll.aggregate({
       totalBetAmount: AggregateField.sum("betAmount"),
     });
@@ -127,11 +127,9 @@ const selectTimeEmitUpdate = async () => {
     // 1.2 get total win amount
     const totalWinCollectionRef = db
       .collection("greedies")
-      .where("createdAt", ">=", startTimestamp)
-      .where("createdAt", "<=", endTimestamp)
+      .where("completed", "==", false)
       .where("status", "==", "win");
 
-    // Update for fix
     const sumWinAggregateQuery = await totalWinCollectionRef.aggregate({
       totalBetAmount: AggregateField.sum("returnAmount"),
     });
@@ -150,12 +148,13 @@ const selectTimeEmitUpdate = async () => {
       payableAmount: payableAmount,
     };
 
+    console.log("data", data);
+
     // Fetch documents round bets and process for winners
     // 1.4
     const singleRoundQuery = await db
       .collection("greedies")
-      .where("createdAt", ">=", startTimestamp)
-      .where("createdAt", "<=", endTimestamp)
+      .where("completed", "==", false)
       .where("round", "==", roundNumber)
       .get();
 
@@ -178,7 +177,7 @@ const selectTimeEmitUpdate = async () => {
 
       console.log("singleRoundQuery is empty");
     }
-
+    // If bets were submitted, choose  win option
     if (!singleRoundQuery.empty) {
       // document to json data
       const items = singleRoundQuery.docs.map((item) => {
@@ -190,16 +189,16 @@ const selectTimeEmitUpdate = async () => {
           optionId: itemData.optionId,
           betAmount: itemData.betAmount,
           rate: itemData.rate,
-          returnAmount: itemData.betAmount * itemData.rate,
+          returnAmount: itemData.returnAmount,
         };
       });
-      // Json data to uniq with groupby data
+      // Json data to uniq with groupby data GrouBy-optionID
       const uniqueData = Object.values(
         items.reduce((acc, item) => {
           if (!acc[item.optionId]) {
             acc[item.optionId] = { ...item, total: 0 };
           }
-          acc[item.optionId].total += item.betAmount * item.rate;
+          acc[item.optionId].total += item.returnAmount;
           return acc;
         }, {})
       );
@@ -213,6 +212,7 @@ const selectTimeEmitUpdate = async () => {
       });
 
       // If no payable option is found, select an alternative set
+      // Risk for if not payable
       if (testArr.length === 0) {
         const betedIds = uniqueData.map((item) => item.optionId);
         testArr = [1, 2, 3, 4, 5, 6, 7, 8].filter(
@@ -226,13 +226,13 @@ const selectTimeEmitUpdate = async () => {
         : [2, 3, 4, 5][Math.floor(Math.random() * 4)];
 
       console.log("Win option:", win_option);
+      currentObject.winOption = win_option;
 
       // 1. Update status of bets to "loss/win"
       // update new commit
       const singleRoundQueryForUpdate = await db
         .collection("greedies")
-        .where("createdAt", ">=", startTimestamp)
-        .where("createdAt", "<=", endTimestamp)
+        .where("completed", "==", false)
         .where("round", "==", roundNumber)
         .where("status", "==", "pending")
         .get();
