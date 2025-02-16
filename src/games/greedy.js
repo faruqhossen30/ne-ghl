@@ -139,7 +139,7 @@ const selectTimeEmitUpdate = async () => {
 
     // 1.3 calculating
     const stockAmount = totalBetAmount - totalWinAmount;
-    const commissionAmount = (stockAmount / 100) * 10;
+    const commissionAmount = (stockAmount / 100) * 20;
     const payableAmount = stockAmount - commissionAmount;
 
     const data = {
