@@ -36,13 +36,16 @@ const selectTimeEmitUpdate = async () => {
     if (!winSnapshot.empty) {
       try {
         let batch = db.batch();
+        let betBatch = db.batch();
         winSnapshot.forEach((doc) => {
           const betData = doc.data();
+          betBatch.update(doc.ref, {paid:true})
           batch.update(betData.userRef, {
             diamond: FieldValue.increment(betData.returnAmount),
           });
         });
         await batch.commit();
+        await betBatch.commit();
       } catch (error) {
         console.log("2.2 error winner amount increment fail", error);
       }
@@ -160,7 +163,7 @@ const selectTimeEmitUpdate = async () => {
     if (singleRoundQuery.empty) {
       // If no bets were submitted, choose a random fallback win option
       const win_option = [1, 2, 3, 4, 5, 6, 7, 8][
-        Math.floor(Math.random() * 4)
+        Math.floor(Math.random() * 8)
       ];
       currentObject.winOption = win_option;
 
@@ -209,14 +212,25 @@ const selectTimeEmitUpdate = async () => {
           testArr.push(bet.optionId);
         }
       });
+      console.log("212 testArr ", testArr);
 
       // If no payable option is found, select an alternative set
-      // Risk for if not payable
       if (testArr.length === 0) {
+        // find and select unbeted optionid
         const betedIds = uniqueData.map((item) => item.optionId);
         testArr = [1, 2, 3, 4, 5, 6, 7, 8].filter(
           (item) => !betedIds.includes(item)
         );
+
+        // if not found unbeted optionid
+        if (testArr.length === 0) {
+          // find and select which lower return betAmount
+          const minOption = uniqueData.reduce(
+            (min, bet) => (bet.returnAmount < min.returnAmount ? bet : min),
+            uniqueData[0]
+          );
+          testArr.push(minOption.optionId)
+        }
       }
 
       // Randomly select a winning option
@@ -242,6 +256,7 @@ const selectTimeEmitUpdate = async () => {
           const docData = doc.data();
           batch.update(doc.ref, {
             status: docData.optionId == win_option ? "win" : "loss",
+            paid: docData.optionId == win_option ? false : true
           });
         });
         await batch.commit();
@@ -266,7 +281,7 @@ const selectTimeEmitUpdate = async () => {
       // Start result
       // Winder option
       startSelectTimeInterval();
-    }, 4000);
+    }, 2000);
   } else {
     currentObject.selectTime = currentObject.selectTime - 1;
     await redisClient.set("greedyObj", JSON.stringify(currentObject));
