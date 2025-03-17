@@ -4,20 +4,19 @@ const { clearInterval } = require("timers");
 const { redisClient } = require("../../config/redis");
 const { io } = require("../../config/socket");
 const { db } = require("../../config/firebaseDB");
-const gameOptiondData = require("../../data/greedyOptions");
 const { startTimestamp, endTimestamp } = require("../../utils/dateGenerate");
 
-const greedy = io.of("/greedy");
+const fruitTeenPattiIO = io.of("/fruitteenpatti");
 
-const greedyObj = {
+const fruitTeenPattiObj = {
   selectTime: 15,
   winOption: 0,
   round: 1,
 };
-const greedyWinRecourds = [1, 2, 3, 4, 5, 6, 7, 8];
+const fruitTeenPattiWinRecourds = [1, 2, 3, 1,2,3,1,2];
 
 const selectTimeEmitUpdate = async () => {
-  const redisValue = await redisClient.get("greedyObj");
+  const redisValue = await redisClient.get("fruitTeenPattiObj");
   const currentObject = await JSON.parse(redisValue);
   const roundNumber = currentObject.round;
 
@@ -25,33 +24,31 @@ const selectTimeEmitUpdate = async () => {
   if (currentObject.selectTime <= 0) {
     stopSelectTimeInter();
 
-    const greediesRef = db.collection("greedies");
-    const winSnapshot = await greediesRef
-      .where("completed", "==", false)
+    const fruitesTeenPattiCollectionRef = db.collection("fruitTeenPatties");
+    const snapshot = await fruitesTeenPattiCollectionRef
+      .where("createdAt", ">=", startTimestamp)
+      .where("createdAt", "<=", endTimestamp)
       .where("round", "==", roundNumber)
       .where("status", "==", "win")
       .get();
     // 2.2 winer user and win amount list
-    if (!winSnapshot.empty) {
+    if (!snapshot.empty) {
       try {
         let batch = db.batch();
-        let betBatch = db.batch();
-        winSnapshot.forEach((doc) => {
+        snapshot.forEach((doc) => {
           const betData = doc.data();
-          betBatch.update(doc.ref, {paid:true})
           batch.update(betData.userRef, {
             diamond: FieldValue.increment(betData.returnAmount),
           });
         });
         await batch.commit();
-        await betBatch.commit();
       } catch (error) {
-        console.log("2.2 error winner amount increment fail", error);
+        console.log("2.2 error", error);
       }
     }
 
     // Result user status
-    const items = await winSnapshot.docs.map((item) => {
+    const items = await snapshot.docs.map((item) => {
       const betData = item.data();
       return betData;
     });
@@ -90,10 +87,16 @@ const selectTimeEmitUpdate = async () => {
     const resultUsers = await Promise.all(userPromises);
     // result user end
 
-    const redisWinRecords = await redisClient.get("greedyWinRecourds");
+    const redisWinRecords = await redisClient.get("fruitTeenPattiWinRecourds");
     const winRecords = await JSON.parse(redisWinRecords);
 
-    greedy.emit("result", {
+    // fruitTeenPattiIO.emit(
+    //   "result",
+    //   JSON.stringify(currentObject),
+    //   resultUsers ?? [],
+    //   winRecords
+    // );
+    fruitTeenPattiIO.emit("result", {
       data: JSON.stringify(currentObject),
       resultUsers: resultUsers ?? [],
       winRecords: winRecords,
@@ -102,7 +105,7 @@ const selectTimeEmitUpdate = async () => {
     currentObject.selectTime = 30;
     currentObject.winOption = 0;
     currentObject.round = currentObject.round + 1;
-    await redisClient.set("greedyObj", JSON.stringify(currentObject));
+    await redisClient.set("fruitTeenPattiObj", JSON.stringify(currentObject));
     setTimeout(async () => {
       startSelectTimeInterval();
     }, 5000);
@@ -110,14 +113,11 @@ const selectTimeEmitUpdate = async () => {
     stopSelectTimeInter();
     currentObject.selectTime = currentObject.selectTime - 1;
 
-    // copy start
-    // const collectionRef = db.collection("greedies");
     // 1.1 get total beted amount
     const coll = await db
-      .collection("greedies")
-      .where("completed", "==", false)
-      .where("status", "!=", "pending");
-
+      .collection("fruitTeenPatties")
+      .where("createdAt", ">=", startTimestamp)
+      .where("createdAt", "<=", endTimestamp);
     const sumAggregateQuery = await coll.aggregate({
       totalBetAmount: AggregateField.sum("betAmount"),
     });
@@ -127,10 +127,12 @@ const selectTimeEmitUpdate = async () => {
 
     // 1.2 get total win amount
     const totalWinCollectionRef = db
-      .collection("greedies")
-      .where("completed", "==", false)
+      .collection("fruitTeenPatties")
+      .where("createdAt", ">=", startTimestamp)
+      .where("createdAt", "<=", endTimestamp)
       .where("status", "==", "win");
 
+    // Update for fix
     const sumWinAggregateQuery = await totalWinCollectionRef.aggregate({
       totalBetAmount: AggregateField.sum("returnAmount"),
     });
@@ -149,36 +151,36 @@ const selectTimeEmitUpdate = async () => {
       payableAmount: payableAmount,
     };
 
-    console.log("data", data);
-
     // Fetch documents round bets and process for winners
     // 1.4
     const singleRoundQuery = await db
-      .collection("greedies")
-      .where("completed", "==", false)
+      .collection("fruitTeenPatties")
+      .where("createdAt", ">=", startTimestamp)
+      .where("createdAt", "<=", endTimestamp)
       .where("round", "==", roundNumber)
       .get();
 
-    if (singleRoundQuery.empty) {
       // If no bets were submitted, choose a random fallback win option
-      const win_option = [1, 2, 3, 4, 5, 6, 7, 8][
-        Math.floor(Math.random() * 8)
+    if (singleRoundQuery.empty) {
+      const win_option = [1, 2, 3][
+        Math.floor(Math.random() * 3)
       ];
       currentObject.winOption = win_option;
 
       // for generate winrecourd option
-      const redisWinRecords = await redisClient.get("greedyWinRecourds");
+      const redisWinRecords = await redisClient.get("fruitTeenPattiWinRecourds");
       const redisWinRecordsArr = await JSON.parse(redisWinRecords);
       await redisWinRecordsArr.unshift(win_option);
       await redisWinRecordsArr.pop();
       await redisClient.set(
-        "greedyWinRecourds",
+        "fruitTeenPattiWinRecourds",
         JSON.stringify(redisWinRecordsArr)
       );
 
       console.log("singleRoundQuery is empty");
     }
-    // If bets were submitted, choose  win option
+
+    // Bet some submitted, generate win option
     if (!singleRoundQuery.empty) {
       // document to json data
       const items = singleRoundQuery.docs.map((item) => {
@@ -190,16 +192,16 @@ const selectTimeEmitUpdate = async () => {
           optionId: itemData.optionId,
           betAmount: itemData.betAmount,
           rate: itemData.rate,
-          returnAmount: itemData.returnAmount,
+          returnAmount: itemData.betAmount * itemData.rate,
         };
       });
-      // Json data to uniq with groupby data GrouBy-optionID
+      // Json data to uniq with groupby data
       const uniqueData = Object.values(
         items.reduce((acc, item) => {
           if (!acc[item.optionId]) {
             acc[item.optionId] = { ...item, total: 0 };
           }
-          acc[item.optionId].total += item.returnAmount;
+          acc[item.optionId].total += item.betAmount * item.rate;
           return acc;
         }, {})
       );
@@ -211,31 +213,19 @@ const selectTimeEmitUpdate = async () => {
           testArr.push(bet.optionId);
         }
       });
-      console.log("212 testArr ", testArr);
 
       // If no payable option is found, select an alternative set
       if (testArr.length === 0) {
-        // find and select unbeted optionid
         const betedIds = uniqueData.map((item) => item.optionId);
-        testArr = [1, 2, 3, 4, 5, 6, 7, 8].filter(
+        testArr = [1, 2, 3].filter(
           (item) => !betedIds.includes(item)
         );
-
-        // if not found unbeted optionid
-        if (testArr.length === 0) {
-          // find and select which lower return betAmount
-          const minOption = uniqueData.reduce(
-            (min, bet) => (bet.returnAmount < min.returnAmount ? bet : min),
-            uniqueData[0]
-          );
-          testArr.push(minOption.optionId)
-        }
       }
 
       // Randomly select a winning option
       const win_option = (await testArr.length)
         ? testArr[Math.floor(Math.random() * testArr.length)]
-        : [2, 3, 4, 5][Math.floor(Math.random() * 4)];
+        : [1, 2, 3][Math.floor(Math.random() * 3)];
 
       console.log("Win option:", win_option);
       currentObject.winOption = win_option;
@@ -243,8 +233,9 @@ const selectTimeEmitUpdate = async () => {
       // 1. Update status of bets to "loss/win"
       // update new commit
       const singleRoundQueryForUpdate = await db
-        .collection("greedies")
-        .where("completed", "==", false)
+        .collection("fruitTeenPatties")
+        .where("createdAt", ">=", startTimestamp)
+        .where("createdAt", "<=", endTimestamp)
         .where("round", "==", roundNumber)
         .where("status", "==", "pending")
         .get();
@@ -255,7 +246,6 @@ const selectTimeEmitUpdate = async () => {
           const docData = doc.data();
           batch.update(doc.ref, {
             status: docData.optionId == win_option ? "win" : "loss",
-            paid: docData.optionId == win_option ? false : true
           });
         });
         await batch.commit();
@@ -263,28 +253,28 @@ const selectTimeEmitUpdate = async () => {
         console.log("1. update statsu of bets to win/loss", error);
       }
       // for generate winrecourd option
-      const redisWinRecords = await redisClient.get("greedyWinRecourds");
+      const redisWinRecords = await redisClient.get("fruitTeenPattiWinRecourds");
       const redisWinRecordsArr = await JSON.parse(redisWinRecords);
       await redisWinRecordsArr.unshift(win_option);
       await redisWinRecordsArr.pop();
       await redisClient.set(
-        "greedyWinRecourds",
+        "fruitTeenPattiWinRecourds",
         JSON.stringify(redisWinRecordsArr)
       );
     }
 
-    await redisClient.set("greedyObj", JSON.stringify(currentObject));
-    greedy.emit("game", JSON.stringify(currentObject));
+    await redisClient.set("fruitTeenPattiObj", JSON.stringify(currentObject));
+    fruitTeenPattiIO.emit("game", JSON.stringify(currentObject));
 
     setTimeout(async () => {
       // Start result
       // Winder option
       startSelectTimeInterval();
-    }, 2000);
+    }, 4000);
   } else {
     currentObject.selectTime = currentObject.selectTime - 1;
-    await redisClient.set("greedyObj", JSON.stringify(currentObject));
-    greedy.emit("game", JSON.stringify(currentObject));
+    await redisClient.set("fruitTeenPattiObj", JSON.stringify(currentObject));
+    fruitTeenPattiIO.emit("game", JSON.stringify(currentObject));
   }
 };
 
@@ -299,11 +289,17 @@ async function startSelectTimeInterval() {
 }
 
 // Socket.io setup
-greedy.on("connection", (socket) => {
+fruitTeenPattiIO.on("connection", (socket) => {
   console.log("A user connected");
   socket.on("disconnect", () => {
     console.log("A user disconnected");
   });
+
+  socket.on('hit', (data) => {
+    console.log('Message from Flutter:', data);
+    fruitTeenPattiIO.emit('fruitTeenPattiRemoteHit', { option: data.option, amount: data.amount });
+  });
+
 });
 
-module.exports = { greedyObj, greedyWinRecourds };
+module.exports = { fruitTeenPattiObj, fruitTeenPattiWinRecourds };

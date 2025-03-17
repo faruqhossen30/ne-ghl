@@ -2,7 +2,6 @@ const mysql = require("mysql2");
 const { clearInterval } = require("timers");
 const { redisClient } = require("../../config/redis");
 const { io } = require("../../config/socket");
-const { mysqlPool } = require("../../config/db");
 const { db } = require("../../config/firebaseDB");
 const { FieldValue } = require("firebase-admin/firestore");
 
