@@ -12,8 +12,8 @@ const { FieldValue, AggregateField } = require("firebase-admin/firestore");
 const { redisClient, radisURL } = require("./config/redis");
 const { app, express, server } = require("./config/server");
 const { io } = require("./config/socket");
-// const { greedyObj, greedyWinRecourds } = require("./src/games/greedy");
-const { greedyObj, greedyWinRecourds, fruitTeenPattiObj, fruitTeenPattiWinRecourds } = require("./src/games/fruitTeenPatti");
+const { greedyObj, greedyWinRecourds } = require("./src/games/greedy");
+const {fruitTeenPattiObj, fruitTeenPattiWinRecourds } = require("./src/games/fruitTeenPatti");
 const { luckyWheelObj } = require("./src/games/luckywheel");
 const greddyGenerateWInPtion = require("./utils/greedyGenerateWinOption");
 const { db } = require("./config/firebaseDB");
@@ -185,8 +185,8 @@ server.listen(3000, async () => {
   });
 
   // For Greedy Game
-  // redisClient.set("greedyObj", JSON.stringify(greedyObj));
-  // redisClient.set("greedyWinRecourds", JSON.stringify(greedyWinRecourds));
+  await redisClient.set("greedyObj", JSON.stringify(greedyObj));
+  await redisClient.set("greedyWinRecourds", JSON.stringify(greedyWinRecourds));
   
   // For Fruits Teen Patti Game
   await redisClient.set("fruitTeenPattiObj", JSON.stringify(fruitTeenPattiObj));
