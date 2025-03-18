@@ -109,9 +109,7 @@ const selectTimeEmitUpdate = async () => {
   } else if (currentObject.selectTime == 6) {
     stopSelectTimeInter();
     currentObject.selectTime = currentObject.selectTime - 1;
-
-    // copy start
-    // const collectionRef = db.collection("greedies");
+    
     // 1.1 get total beted amount
     const coll = await db
       .collection("greedies")
