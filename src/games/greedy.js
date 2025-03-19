@@ -6,6 +6,7 @@ const { io } = require("../../config/socket");
 const { db } = require("../../config/firebaseDB");
 const gameOptiondData = require("../../data/greedyOptions");
 const { startTimestamp, endTimestamp } = require("../../utils/dateGenerate");
+const { finalPayableAmount } = require("../../utils/amountCalculation");
 
 const greedy = io.of("/greedy");
 
@@ -139,7 +140,7 @@ const selectTimeEmitUpdate = async () => {
     // 1.3 calculating
     const stockAmount = totalBetAmount - totalWinAmount;
     const commissionAmount = (stockAmount / 100) * 30;
-    const payableAmount = stockAmount - commissionAmount;
+    const payableAmount = finalPayableAmount((stockAmount - commissionAmount));
 
     const data = {
       stockAmount: stockAmount,
