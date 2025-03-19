@@ -1,4 +1,4 @@
-async function finalPayableAmount(number) {
+function finalPayableAmount(number) {
     if (number < 0) {
         return 0;
     }
