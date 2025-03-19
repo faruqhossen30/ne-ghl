@@ -209,7 +209,7 @@ const selectTimeEmitUpdate = async () => {
             // Collect valid optionId that fit within payableAmount
             let testArr = [];
             uniqueData.forEach((bet) => {
-                if (bet.total <= payableAmount) {
+                if (bet.total < payableAmount) {
                     testArr.push(bet.optionId);
                 }
             });
@@ -217,19 +217,24 @@ const selectTimeEmitUpdate = async () => {
             // If no payable option is found, select an which is not beted / unbeted option id
             if (testArr.length === 0) {
                 // find and select unbeted optionid
+                console.log('not found payable optioid');
+                
+                // if not found unbeted optionid
                 const betedIds = uniqueData.map((item) => item.optionId);
                 testArr = [1, 2, 3].filter(
                     (item) => !betedIds.includes(item)
                 );
-                // if not found unbeted optionid
-                if (testArr.length === 0) {
-                    // find and select which lower return betAmount
-                    const minOption = uniqueData.reduce(
-                        (min, bet) => (bet.returnAmount < min.returnAmount ? bet : min),
-                        uniqueData[0]
-                    );
-                    testArr.push(minOption.optionId)
-                }
+                
+
+                // find and select which lower return betAmount
+
+                // if (testArr.length === 0) {
+                //     const minOption = uniqueData.reduce(
+                //         (min, bet) => (bet.returnAmount < min.returnAmount ? bet : min),
+                //         uniqueData[0]
+                //     );
+                //     testArr.push(minOption.optionId)
+                // }
             }
 
             // Randomly select a winning option
