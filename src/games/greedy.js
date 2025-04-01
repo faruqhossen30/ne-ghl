@@ -39,7 +39,7 @@ const selectTimeEmitUpdate = async () => {
         let betBatch = db.batch();
         winSnapshot.forEach((doc) => {
           const betData = doc.data();
-          betBatch.update(doc.ref, {paid:true})
+          betBatch.update(doc.ref, { paid: true })
           batch.update(betData.userRef, {
             diamond: FieldValue.increment(betData.returnAmount),
           });
@@ -81,10 +81,10 @@ const selectTimeEmitUpdate = async () => {
       const userData = await userDoc.data();
       return userDoc.exists
         ? {
-            winAmount: item.totalReturnAmount,
-            name: userData.name,
-            photoURL: userData.photoURL,
-          }
+          winAmount: item.totalReturnAmount,
+          name: userData.name,
+          photoURL: userData.photoURL,
+        }
         : null;
     });
 
@@ -110,7 +110,7 @@ const selectTimeEmitUpdate = async () => {
   } else if (currentObject.selectTime == 6) {
     stopSelectTimeInter();
     currentObject.selectTime = currentObject.selectTime - 1;
-    
+
     // 1.1 get total beted amount
     const coll = await db
       .collection("greedies")
@@ -148,7 +148,7 @@ const selectTimeEmitUpdate = async () => {
       payableAmount: payableAmount,
     };
 
-    console.log("data", data);
+    // console.log("data", data);
 
     // Fetch documents round bets and process for winners
     // 1.4
@@ -175,7 +175,7 @@ const selectTimeEmitUpdate = async () => {
         JSON.stringify(redisWinRecordsArr)
       );
 
-      console.log("singleRoundQuery is empty");
+      // console.log("singleRoundQuery is empty");
     }
     // If bets were submitted, choose  win option
     if (!singleRoundQuery.empty) {
@@ -236,7 +236,7 @@ const selectTimeEmitUpdate = async () => {
         ? testArr[Math.floor(Math.random() * testArr.length)]
         : [2, 3, 4, 5][Math.floor(Math.random() * 4)];
 
-      console.log("Win option:", win_option);
+      // console.log("Win option:", win_option);
       currentObject.winOption = win_option;
 
       // 1. Update status of bets to "loss/win"
@@ -297,11 +297,24 @@ async function startSelectTimeInterval() {
   selectTimeInterval = setInterval(selectTimeEmitUpdate, 1000);
 }
 
+let playerUsers = [];
 // Socket.io setup
 greedy.on("connection", (socket) => {
-  console.log("A user connected");
+  console.log("A user socket.handshake.query.userUid ", socket.handshake.query.userUid);
+
+  if (!playerUsers.includes(socket.handshake.query.userUid)) {
+    playerUsers.push(socket.handshake.query.userUid);
+  };
+
+  greedy.emit("playerUsers", playerUsers);
+
   socket.on("disconnect", () => {
-    console.log("A user disconnected");
+    console.log("A user disconnected", socket.handshake.query.userUid);
+    const index = playerUsers.indexOf(socket.handshake.query.userUid);
+    if (index !== -1) {
+      playerUsers.splice(index, 1);
+    }
+    greedy.emit("playerUsers", playerUsers);
   });
 });
 

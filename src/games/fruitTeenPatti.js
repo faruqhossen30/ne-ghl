@@ -149,7 +149,7 @@ const selectTimeEmitUpdate = async () => {
             payableAmount: payableAmount,
         };
 
-        console.log("fruitTeenPatties", data);
+        // console.log("fruitTeenPatties", data);
 
 
         // Fetch documents round bets and process for winners
@@ -177,7 +177,7 @@ const selectTimeEmitUpdate = async () => {
                 JSON.stringify(redisWinRecordsArr)
             );
 
-            console.log("Teen patti bet is empty");
+            // console.log("Teen patti bet is empty");
         }
 
         // Bet some submitted, generate win option
@@ -303,6 +303,7 @@ async function startSelectTimeInterval() {
 }
 
 // Socket.io setup
+
 fruitTeenPattiIO.on("connection", (socket) => {
     console.log("A user connected");
     socket.on("disconnect", () => {
