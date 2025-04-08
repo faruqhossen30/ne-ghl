@@ -14,7 +14,6 @@ const { app, express, server } = require("./config/server");
 const { io } = require("./config/socket");
 const { greedyObj, greedyWinRecourds } = require("./src/games/greedy");
 const { fruitTeenPattiObj, fruitTeenPattiWinRecourds } = require("./src/games/fruitTeenPatti");
-const { luckyWheelObj } = require("./src/games/luckywheel");
 const greddyGenerateWInPtion = require("./utils/greedyGenerateWinOption");
 const { db } = require("./config/firebaseDB");
 const { startTimestamp, endTimestamp } = require("./utils/dateGenerate");
