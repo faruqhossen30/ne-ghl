@@ -1,22 +1,29 @@
-const { getFirestore, Timestamp } = require("firebase-admin/firestore");
+const { Timestamp } = require("firebase-admin/firestore");
+const moment = require("moment-timezone");
 
+// Define timezone
+const TIMEZONE = "Asia/Dhaka"; // UTC+6 (Bangladesh). Change if you want a different UTC+6 region
 
+// Current time in UTC+6
+const now = moment().tz(TIMEZONE);
 
-const now = new Date();
-const startOfDay = new Date(now.setHours(0, 0, 0, 0)); // 00:00:00
-const endOfDay = new Date(now.setHours(23, 59, 59, 999)); // 23:59:59
+// Start and end of the day in UTC+6
+const startOfDay = now.clone().startOf('day');
+const endOfDay = now.clone().endOf('day');
 
-const firstDayMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-const lastDayMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-
-
+// Start and end of the current month in UTC+6
+const startOfMonth = now.clone().startOf('month');
+const endOfMonth = now.clone().endOf('month');
 
 // Convert to Firestore Timestamps
-const dayStartTimestamp = Timestamp.fromDate(startOfDay);
-const dayEndTimestamp = Timestamp.fromDate(endOfDay);
+const dayStartTimestamp = Timestamp.fromDate(startOfDay.toDate());
+const dayEndTimestamp = Timestamp.fromDate(endOfDay.toDate());
+const monthStartTimestamp = Timestamp.fromDate(startOfMonth.toDate());
+const monthEndTimestamp = Timestamp.fromDate(endOfMonth.toDate());
 
-// Convert to Firestore Timestamps
-const monthStartTimestamp = Timestamp.fromDate(firstDayMonth);
-const monthEndTimestamp = Timestamp.fromDate(lastDayMonth);
-
-module.exports = {dayStartTimestamp,dayEndTimestamp,monthStartTimestamp,monthEndTimestamp}
+module.exports = {
+  dayStartTimestamp,
+  dayEndTimestamp,
+  monthStartTimestamp,
+  monthEndTimestamp
+};

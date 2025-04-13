@@ -1,18 +1,53 @@
 const express = require('express');
 const router = express.Router();
 
-
 const { db } = require("../config/firebaseDB");
 const { dayStartTimestamp, dayEndTimestamp, monthEndTimestamp, monthStartTimestamp } = require('../utils/dateGenerate');
+
+// Helper function to get all documents with pagination
+async function getAllDocuments(collectionRef, queryConstraints = []) {
+  let allDocs = [];
+  let lastDoc = null;
+  const batchSize = 1000; // Process 1000 documents at a time
+
+  do {
+    let query = collectionRef;
+    
+    // Apply query constraints
+    queryConstraints.forEach(constraint => {
+      query = query.where(...constraint);
+    });
+
+    // Add pagination
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+    query = query.limit(batchSize);
+
+    const snapshot = await query.get();
+    const docs = snapshot.docs;
+    
+    if (docs.length === 0) break;
+    
+    allDocs = allDocs.concat(docs);
+    lastDoc = docs[docs.length - 1];
+  } while (true);
+
+  return allDocs;
+}
 
 router.get('/daily-earning-ranking/:id', async (req, res) => {
   try {
     const collectionName = 'giftTransactions';
-    const snapshot = await db.collection(collectionName)
-    .where("receiverId", "==", parseInt(req.params.id))
-    .where("createdAt", ">=", dayStartTimestamp)
-    .where("createdAt", "<=", dayEndTimestamp)
-    .get();
+    const collectionRef = db.collection(collectionName);
+    
+    const queryConstraints = [
+      ["receiverId", "==", parseInt(req.params.id)],
+      ["createdAt", ">=", dayStartTimestamp],
+      ["createdAt", "<=", dayEndTimestamp]
+    ];
+
+    const snapshot = await getAllDocuments(collectionRef, queryConstraints);
 
     const senderTotals = {}; // Object to store total amounts and refs per senderId
     
@@ -39,10 +74,7 @@ router.get('/daily-earning-ranking/:id', async (req, res) => {
         senderRef: data.senderRef.path,
         totalDiamond: data.amount,
       }))
-      .sort((a, b) => b.totalDiamond - a.totalDiamond); // Sort in descending order
-
-    // Limit to 50 data
-    ranking = ranking.slice(0, 50);
+      .sort((a, b) => b.totalDiamond - a.totalDiamond);
 
     // Add serial number
     ranking = ranking.map((item, index) => ({
@@ -59,11 +91,15 @@ router.get('/daily-earning-ranking/:id', async (req, res) => {
 router.get('/monthly-earning-ranking/:id', async (req, res) => {
   try {
     const collectionName = 'giftTransactions';
-    const snapshot = await db.collection(collectionName)
-    .where("receiverId", "==", parseInt(req.params.id))
-    .where("createdAt", ">=", monthStartTimestamp)
-    .where("createdAt", "<=", monthEndTimestamp)
-    .get();
+    const collectionRef = db.collection(collectionName);
+    
+    const queryConstraints = [
+      ["receiverId", "==", parseInt(req.params.id)],
+      ["createdAt", ">=", monthStartTimestamp],
+      ["createdAt", "<=", monthEndTimestamp]
+    ];
+
+    const snapshot = await getAllDocuments(collectionRef, queryConstraints);
 
     const senderTotals = {}; // Object to store total amounts and refs per senderId
     
@@ -90,10 +126,7 @@ router.get('/monthly-earning-ranking/:id', async (req, res) => {
         senderRef: data.senderRef.path,
         totalDiamond: data.amount,
       }))
-      .sort((a, b) => b.totalDiamond - a.totalDiamond); // Sort in descending order
-
-    // Limit to 50 data
-    ranking = ranking.slice(0, 50);
+      .sort((a, b) => b.totalDiamond - a.totalDiamond);
 
     // Add serial number
     ranking = ranking.map((item, index) => ({
@@ -107,14 +140,17 @@ router.get('/monthly-earning-ranking/:id', async (req, res) => {
   }
 });
 
-// GET all documents from a collection
 router.get('/daily-sender-ranking', async (req, res) => {
   try {
     const collectionName = 'giftTransactions';
-    const snapshot = await db.collection(collectionName)
-    .where("createdAt", ">=", dayStartTimestamp)
-    .where("createdAt", "<=", dayEndTimestamp)
-    .get();
+    const collectionRef = db.collection(collectionName);
+    
+    const queryConstraints = [
+      ["createdAt", ">=", dayStartTimestamp],
+      ["createdAt", "<=", dayEndTimestamp]
+    ];
+
+    const snapshot = await getAllDocuments(collectionRef, queryConstraints);
 
     const senderTotals = {}; // Object to store total amounts and refs per senderId
     
@@ -141,10 +177,7 @@ router.get('/daily-sender-ranking', async (req, res) => {
         senderRef: data.senderRef.path,
         totalDiamond: data.amount,
       }))
-      .sort((a, b) => b.totalDiamond - a.totalDiamond); // Sort in descending order
-
-    // Limit to 50 data
-    ranking = ranking.slice(0, 50);
+      .sort((a, b) => b.totalDiamond - a.totalDiamond);
 
     // Add serial number
     ranking = ranking.map((item, index) => ({
@@ -161,10 +194,14 @@ router.get('/daily-sender-ranking', async (req, res) => {
 router.get('/monthly-sender-ranking', async (req, res) => {
   try {
     const collectionName = 'giftTransactions';
-    const snapshot = await db.collection(collectionName)
-    .where("createdAt", ">=", monthStartTimestamp)
-    .where("createdAt", "<=", monthEndTimestamp)
-    .get();
+    const collectionRef = db.collection(collectionName);
+    
+    const queryConstraints = [
+      ["createdAt", ">=", monthStartTimestamp],
+      ["createdAt", "<=", monthEndTimestamp]
+    ];
+
+    const snapshot = await getAllDocuments(collectionRef, queryConstraints);
 
     const senderTotals = {}; // Object to store total amounts and refs per senderId
     
@@ -191,10 +228,7 @@ router.get('/monthly-sender-ranking', async (req, res) => {
         senderRef: data.senderRef.path,
         totalDiamond: data.amount,
       }))
-      .sort((a, b) => b.totalDiamond - a.totalDiamond); // Sort in descending order
-
-    // Limit to 50 data
-    ranking = ranking.slice(0, 50);
+      .sort((a, b) => b.totalDiamond - a.totalDiamond);
 
     // Add serial number
     ranking = ranking.map((item, index) => ({
@@ -211,12 +245,16 @@ router.get('/monthly-sender-ranking', async (req, res) => {
 router.get('/daily-receiver-ranking', async (req, res) => {
   try {
     const collectionName = 'giftTransactions';
-    const snapshot = await db.collection(collectionName)
-    .where("createdAt", ">=", dayStartTimestamp)
-    .where("createdAt", "<=", dayEndTimestamp)
-    .get();
+    const collectionRef = db.collection(collectionName);
+    
+    const queryConstraints = [
+      ["createdAt", ">=", dayStartTimestamp],
+      ["createdAt", "<=", dayEndTimestamp]
+    ];
 
-    const senderTotals = {}; // Object to store total amounts and refs per senderId
+    const snapshot = await getAllDocuments(collectionRef, queryConstraints);
+
+    const receiverTotals = {}; // Object to store total amounts and refs per receiverId
     
     snapshot.forEach(doc => {
       const data = doc.data();
@@ -224,10 +262,10 @@ router.get('/daily-receiver-ranking', async (req, res) => {
       const receiverRef = data.receiverRef;
       const amount = data.diamond || 0;
 
-      if (senderTotals[receiverId]) {
-        senderTotals[receiverId].amount += amount;
+      if (receiverTotals[receiverId]) {
+        receiverTotals[receiverId].amount += amount;
       } else {
-        senderTotals[receiverId] = {
+        receiverTotals[receiverId] = {
           amount: amount,
           receiverRef: receiverRef
         };
@@ -235,16 +273,13 @@ router.get('/daily-receiver-ranking', async (req, res) => {
     });
 
     // Convert the object to an array and sort it
-    let ranking = Object.entries(senderTotals)
+    let ranking = Object.entries(receiverTotals)
       .map(([receiverId, data]) => ({
         receiverId,
         receiverRef: data.receiverRef.path,
         totalDiamond: data.amount,
       }))
-      .sort((a, b) => b.totalDiamond - a.totalDiamond); // Sort in descending order
-
-    // Limit to 50 data
-    ranking = ranking.slice(0, 50);
+      .sort((a, b) => b.totalDiamond - a.totalDiamond);
 
     // Add serial number
     ranking = ranking.map((item, index) => ({
@@ -257,17 +292,20 @@ router.get('/daily-receiver-ranking', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
 
 router.get('/monthly-receiver-ranking', async (req, res) => {
   try {
     const collectionName = 'giftTransactions';
-    const snapshot = await db.collection(collectionName)
-    .where("createdAt", ">=", monthStartTimestamp)
-    .where("createdAt", "<=", monthEndTimestamp)
-    .get();
+    const collectionRef = db.collection(collectionName);
+    
+    const queryConstraints = [
+      ["createdAt", ">=", monthStartTimestamp],
+      ["createdAt", "<=", monthEndTimestamp]
+    ];
 
-    const senderTotals = {}; // Object to store total amounts and refs per senderId
+    const snapshot = await getAllDocuments(collectionRef, queryConstraints);
+
+    const receiverTotals = {}; // Object to store total amounts and refs per receiverId
     
     snapshot.forEach(doc => {
       const data = doc.data();
@@ -275,10 +313,10 @@ router.get('/monthly-receiver-ranking', async (req, res) => {
       const receiverRef = data.receiverRef;
       const amount = data.diamond || 0;
 
-      if (senderTotals[receiverId]) {
-        senderTotals[receiverId].amount += amount;
+      if (receiverTotals[receiverId]) {
+        receiverTotals[receiverId].amount += amount;
       } else {
-        senderTotals[receiverId] = {
+        receiverTotals[receiverId] = {
           amount: amount,
           receiverRef: receiverRef
         };
@@ -286,16 +324,13 @@ router.get('/monthly-receiver-ranking', async (req, res) => {
     });
 
     // Convert the object to an array and sort it
-    let ranking = Object.entries(senderTotals)
+    let ranking = Object.entries(receiverTotals)
       .map(([receiverId, data]) => ({
         receiverId,
         receiverRef: data.receiverRef.path,
         totalDiamond: data.amount,
       }))
-      .sort((a, b) => b.totalDiamond - a.totalDiamond); // Sort in descending order
-
-    // Limit to 50 data
-    ranking = ranking.slice(0, 50);
+      .sort((a, b) => b.totalDiamond - a.totalDiamond);
 
     // Add serial number
     ranking = ranking.map((item, index) => ({
@@ -308,6 +343,5 @@ router.get('/monthly-receiver-ranking', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
 
 module.exports = router;

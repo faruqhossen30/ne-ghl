@@ -1,5 +1,5 @@
 const mysql = require("mysql2");
-const { FieldValue, AggregateField } = require("firebase-admin/firestore");
+const { FieldValue, AggregateField, FieldPath } = require("firebase-admin/firestore");
 const { clearInterval } = require("timers");
 const { redisClient } = require("../../config/redis");
 const { io } = require("../../config/socket");
@@ -8,314 +8,393 @@ const gameOptiondData = require("../../data/greedyOptions");
 const { startTimestamp, endTimestamp } = require("../../utils/dateGenerate");
 const { finalPayableAmount } = require("../../utils/amountCalculation");
 
-const greedy = io.of("/greedy");
+const crypto = require('crypto');
 
+// Constants
+const NAMESPACE = '/greedy';
+const DEFAULT_SELECT_TIME = 15;
+const RESULT_DISPLAY_TIME = 2000;
+const WIN_CALCULATION_DELAY = 2000;
+const COMMISSION_PERCENTAGE = 30;
+const FALLBACK_WIN_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8];
+const greedyWinRecourds = [1, 2, 3, 4, 5, 6, 7, 8];
+
+const greedy = io.of(NAMESPACE);
+
+// Initial game state
 const greedyObj = {
-  selectTime: 15,
+  selectTime: DEFAULT_SELECT_TIME,
   winOption: 0,
   round: 1,
 };
-const greedyWinRecourds = [1, 2, 3, 4, 5, 6, 7, 8];
 
-const selectTimeEmitUpdate = async () => {
-  const redisValue = await redisClient.get("greedyObj");
-  const currentObject = await JSON.parse(redisValue);
-  const roundNumber = currentObject.round;
+let selectTimeInterval;
 
-  // display result emit
-  if (currentObject.selectTime <= 0) {
-    stopSelectTimeInter();
-
-    const greediesRef = db.collection("greedies");
-    const winSnapshot = await greediesRef
-      .where("completed", "==", false)
-      .where("round", "==", roundNumber)
-      .where("status", "==", "win")
-      .get();
-    // 2.2 winer user and win amount list
-    if (!winSnapshot.empty) {
-      try {
-        let batch = db.batch();
-        let betBatch = db.batch();
-        winSnapshot.forEach((doc) => {
-          const betData = doc.data();
-          betBatch.update(doc.ref, { paid: true })
-          batch.update(betData.userRef, {
-            diamond: FieldValue.increment(betData.returnAmount),
-          });
-        });
-        await batch.commit();
-        await betBatch.commit();
-      } catch (error) {
-        console.log("2.2 error winner amount increment fail", error);
-      }
-    }
-
-    // Result user status
-    const items = await winSnapshot.docs.map((item) => {
-      const betData = item.data();
-      return betData;
-    });
-
-    const groupedData = await items.reduce((acc, item) => {
-      if (!acc[item.userId]) {
-        acc[item.userId] = {
-          userId: item.userId,
-          userRef: item.userRef,
-          count: 0,
-          totalReturnAmount: 0,
-        };
-      }
-      acc[item.userId].count += 1;
-      acc[item.userId].totalReturnAmount += item.returnAmount;
-      return acc;
-    }, {});
-
-    const result = await Object.values(groupedData).sort(
-      (a, b) => b.totalReturnAmount - a.totalReturnAmount
-    );
-
-    // Fetch user data from Firestore
-    const userPromises = await result.map(async (item) => {
-      const userDoc = await item.userRef.get();
-      const userData = await userDoc.data();
-      return userDoc.exists
-        ? {
-          winAmount: item.totalReturnAmount,
-          name: userData.name,
-          photoURL: userData.photoURL,
-        }
-        : null;
-    });
-
-    const resultUsers = await Promise.all(userPromises);
-    // result user end
-
+// Helper Functions
+const updateWinRecords = async (winOption) => {
+  try {
     const redisWinRecords = await redisClient.get("greedyWinRecourds");
-    const winRecords = await JSON.parse(redisWinRecords);
-
-    greedy.emit("result", {
-      data: JSON.stringify(currentObject),
-      resultUsers: resultUsers ?? [],
-      winRecords: winRecords,
-    });
-
-    currentObject.selectTime = 30;
-    currentObject.winOption = 0;
-    currentObject.round = currentObject.round + 1;
-    await redisClient.set("greedyObj", JSON.stringify(currentObject));
-    setTimeout(async () => {
-      startSelectTimeInterval();
-    }, 5000);
-  } else if (currentObject.selectTime == 6) {
-    stopSelectTimeInter();
-    currentObject.selectTime = currentObject.selectTime - 1;
-
-    // 1.1 get total beted amount
-    const coll = await db
-      .collection("greedies")
-      .where("completed", "==", false)
-      .where("status", "!=", "pending");
-
-    const sumAggregateQuery = await coll.aggregate({
-      totalBetAmount: AggregateField.sum("betAmount"),
-    });
-
-    const snapshot = await sumAggregateQuery.get();
-    const totalBetAmount = await snapshot.data().totalBetAmount;
-
-    // 1.2 get total win amount
-    const totalWinCollectionRef = db
-      .collection("greedies")
-      .where("completed", "==", false)
-      .where("status", "==", "win");
-
-    const sumWinAggregateQuery = await totalWinCollectionRef.aggregate({
-      totalBetAmount: AggregateField.sum("returnAmount"),
-    });
-
-    const totalWinAmountSnapshot = await sumWinAggregateQuery.get();
-    const totalWinAmount = await totalWinAmountSnapshot.data().totalBetAmount;
-
-    // 1.3 calculating
-    const stockAmount = totalBetAmount - totalWinAmount;
-    const commissionAmount = (stockAmount / 100) * 30;
-    const payableAmount = finalPayableAmount((stockAmount - commissionAmount));
-
-    const data = {
-      stockAmount: stockAmount,
-      commissionAmount: commissionAmount,
-      payableAmount: payableAmount,
-    };
-
-    // console.log("data", data);
-
-    // Fetch documents round bets and process for winners
-    // 1.4
-    const singleRoundQuery = await db
-      .collection("greedies")
-      .where("completed", "==", false)
-      .where("round", "==", roundNumber)
-      .get();
-
-    if (singleRoundQuery.empty) {
-      // If no bets were submitted, choose a random fallback win option
-      const win_option = [1, 2, 3, 4, 5, 6, 7, 8][
-        Math.floor(Math.random() * 8)
-      ];
-      currentObject.winOption = win_option;
-
-      // for generate winrecourd option
-      const redisWinRecords = await redisClient.get("greedyWinRecourds");
-      const redisWinRecordsArr = await JSON.parse(redisWinRecords);
-      await redisWinRecordsArr.unshift(win_option);
-      await redisWinRecordsArr.pop();
-      await redisClient.set(
-        "greedyWinRecourds",
-        JSON.stringify(redisWinRecordsArr)
-      );
-
-      // console.log("singleRoundQuery is empty");
-    }
-    // If bets were submitted, choose  win option
-    if (!singleRoundQuery.empty) {
-      // document to json data
-      const items = singleRoundQuery.docs.map((item) => {
-        const itemData = item.data();
-        let totalReturnAmount = item.data();
-        return {
-          id: item.id,
-          round: itemData.round,
-          optionId: itemData.optionId,
-          betAmount: itemData.betAmount,
-          rate: itemData.rate,
-          returnAmount: itemData.returnAmount,
-        };
-      });
-      // Json data to uniq with groupby data GrouBy-optionID
-      const uniqueData = Object.values(
-        items.reduce((acc, item) => {
-          if (!acc[item.optionId]) {
-            acc[item.optionId] = { ...item, total: 0 };
-          }
-          acc[item.optionId].total += item.returnAmount;
-          return acc;
-        }, {})
-      );
-
-      // Collect valid optionId that fit within payableAmount
-      let testArr = [];
-      uniqueData.forEach((bet) => {
-        if (bet.total <= payableAmount) {
-          testArr.push(bet.optionId);
-        }
-      });
-      console.log("212 testArr ", testArr);
-
-      // If no payable option is found, select an alternative set
-      if (testArr.length === 0) {
-        // find and select unbeted optionid
-        const betedIds = uniqueData.map((item) => item.optionId);
-        testArr = [1, 2, 3, 4, 5, 6, 7, 8].filter(
-          (item) => !betedIds.includes(item)
-        );
-
-        // if not found unbeted optionid
-        if (testArr.length === 0) {
-          // find and select which lower return betAmount
-          const minOption = uniqueData.reduce(
-            (min, bet) => (bet.returnAmount < min.returnAmount ? bet : min),
-            uniqueData[0]
-          );
-          testArr.push(minOption.optionId)
-        }
-      }
-
-      // Randomly select a winning option
-      const win_option = (await testArr.length)
-        ? testArr[Math.floor(Math.random() * testArr.length)]
-        : [2, 3, 4, 5][Math.floor(Math.random() * 4)];
-
-      // console.log("Win option:", win_option);
-      currentObject.winOption = win_option;
-
-      // 1. Update status of bets to "loss/win"
-      // update new commit
-      const singleRoundQueryForUpdate = await db
-        .collection("greedies")
-        .where("completed", "==", false)
-        .where("round", "==", roundNumber)
-        .where("status", "==", "pending")
-        .get();
-
-      let batch = await db.batch();
-      try {
-        singleRoundQueryForUpdate.forEach((doc) => {
-          const docData = doc.data();
-          batch.update(doc.ref, {
-            status: docData.optionId == win_option ? "win" : "loss",
-            paid: docData.optionId == win_option ? false : true
-          });
-        });
-        await batch.commit();
-      } catch (error) {
-        console.log("1. update statsu of bets to win/loss", error);
-      }
-      // for generate winrecourd option
-      const redisWinRecords = await redisClient.get("greedyWinRecourds");
-      const redisWinRecordsArr = await JSON.parse(redisWinRecords);
-      await redisWinRecordsArr.unshift(win_option);
-      await redisWinRecordsArr.pop();
-      await redisClient.set(
-        "greedyWinRecourds",
-        JSON.stringify(redisWinRecordsArr)
-      );
-    }
-
-    await redisClient.set("greedyObj", JSON.stringify(currentObject));
-    greedy.emit("game", JSON.stringify(currentObject));
-
-    setTimeout(async () => {
-      // Start result
-      // Winder option
-      startSelectTimeInterval();
-    }, 2000);
-  } else {
-    currentObject.selectTime = currentObject.selectTime - 1;
-    await redisClient.set("greedyObj", JSON.stringify(currentObject));
-    greedy.emit("game", JSON.stringify(currentObject));
+    const winRecordsArr = JSON.parse(redisWinRecords);
+    winRecordsArr.unshift(winOption);
+    winRecordsArr.pop();
+    await redisClient.set("greedyWinRecourds", JSON.stringify(winRecordsArr));
+  } catch (error) {
+    console.error("Error updating win records:", error);
   }
 };
 
-let selectTimeInterval = setInterval(selectTimeEmitUpdate, 1000);
+const processWinners = async (roundNumber) => {
+  try {
+    const greediesRef = db.collection("greedies");
+    const BATCH_SIZE = 500; // Firestore batch limit
+    const PAGE_SIZE = 1000; // Safe size for pagination
+    let lastDoc = null;
+    const userMap = new Map();
 
-async function stopSelectTimeInter() {
-  clearInterval(selectTimeInterval);
-}
+    // Process winners in pages
+    while (true) {
+      // Optimized query with proper ordering
+      let query = greediesRef
+        .where("round", "==", roundNumber)  // Most selective filter first
+        .where("status", "==", "win")       // Second most selective
+        .where("completed", "==", false)    // Least selective last
+        .orderBy(FieldPath.documentId());   // For pagination
 
-async function startSelectTimeInterval() {
+      if (lastDoc) {
+        query = query.startAfter(lastDoc);
+      }
+
+      const winSnapshot = await query.limit(PAGE_SIZE).get();
+      if (winSnapshot.empty) break;
+
+      // Process documents in batches
+      const documents = winSnapshot.docs;
+      for (let i = 0; i < documents.length; i += BATCH_SIZE) {
+        const batch = db.batch();
+        const betBatch = db.batch();
+        const chunk = documents.slice(i, i + BATCH_SIZE);
+
+        chunk.forEach((doc) => {
+          const betData = doc.data();
+          betBatch.update(doc.ref, { paid: true });
+          batch.update(betData.userRef, {
+            diamond: FieldValue.increment(betData.returnAmount),
+          });
+
+          // Group winner data
+          const userId = betData.userId;
+          if (!userMap.has(userId)) {
+            userMap.set(userId, {
+              userId,
+              userRef: betData.userRef,
+              count: 0,
+              totalReturnAmount: 0,
+            });
+          }
+          const userStats = userMap.get(userId);
+          userStats.count += 1;
+          userStats.totalReturnAmount += betData.returnAmount;
+        });
+
+        await Promise.all([batch.commit(), betBatch.commit()]);
+      }
+
+      lastDoc = documents[documents.length - 1];
+    }
+
+    // Sort winners by total return amount
+    const sortedWinners = Array.from(userMap.values())
+      .sort((a, b) => b.totalReturnAmount - a.totalReturnAmount);
+
+    // Fetch user details in parallel with a reasonable batch size
+    const BATCH_USER_DETAILS = 50;
+    const userDetails = [];
+    for (let i = 0; i < sortedWinners.length; i += BATCH_USER_DETAILS) {
+      const chunk = sortedWinners.slice(i, i + BATCH_USER_DETAILS);
+      const chunkDetails = await Promise.all(
+        chunk.map(async (item) => {
+          const userDoc = await item.userRef.get();
+          const userData = userDoc.data();
+          return userDoc.exists ? {
+            winAmount: item.totalReturnAmount,
+            name: userData.name,
+            photoURL: userData.photoURL,
+          } : null;
+        })
+      );
+      userDetails.push(...chunkDetails.filter(Boolean));
+    }
+
+    return userDetails;
+  } catch (error) {
+    console.error("Error processing winners:", error);
+    return [];
+  }
+};
+
+const calculateGameMetrics = async () => {
+  try {
+    const greediesRef = db.collection("greedies");
+    const BATCH_SIZE = 10000; // Firestore's aggregation limit
+    let totalBetAmount = 0;
+    let totalWinAmount = 0;
+    let lastBetDoc = null;
+    let lastWinDoc = null;
+
+    // Process bet amounts in batches
+    while (true) {
+      let betQuery = greediesRef
+        .where("completed", "==", false)
+        .where("status", "!=", "pending");
+
+      if (lastBetDoc) {
+        betQuery = betQuery.startAfter(lastBetDoc);
+      }
+
+      const betSnapshot = await betQuery.limit(BATCH_SIZE).get();
+      if (betSnapshot.empty) break;
+
+      const batchBetAmount = betSnapshot.docs.reduce((sum, doc) => {
+        return sum + (doc.data().betAmount || 0);
+      }, 0);
+
+      totalBetAmount += batchBetAmount;
+      lastBetDoc = betSnapshot.docs[betSnapshot.docs.length - 1];
+    }
+
+    // Process win amounts in batches
+    while (true) {
+      let winQuery = greediesRef
+        .where("completed", "==", false)
+        .where("status", "==", "win");
+
+      if (lastWinDoc) {
+        winQuery = winQuery.startAfter(lastWinDoc);
+      }
+
+      const winSnapshot = await winQuery.limit(BATCH_SIZE).get();
+      if (winSnapshot.empty) break;
+
+      const batchWinAmount = winSnapshot.docs.reduce((sum, doc) => {
+        return sum + (doc.data().returnAmount || 0);
+      }, 0);
+
+      totalWinAmount += batchWinAmount;
+      lastWinDoc = winSnapshot.docs[winSnapshot.docs.length - 1];
+    }
+
+    const stockAmount = totalBetAmount - totalWinAmount;
+    const commissionAmount = (stockAmount * COMMISSION_PERCENTAGE) / 100;
+    
+    console.log('payable', finalPayableAmount((stockAmount - commissionAmount)));
+    
+    return {
+      stockAmount,
+      commissionAmount,
+      payableAmount: finalPayableAmount((stockAmount - commissionAmount))
+    };
+  } catch (error) {
+    console.error("Error calculating game metrics:", error);
+    return { stockAmount: 0, commissionAmount: 0, payableAmount: 0 };
+  }
+};
+
+// Helper function for secure random number generation
+const getSecureRandomNumber = (max) => {
+  const randomBytes = crypto.randomBytes(4);
+  const randomNumber = randomBytes.readUInt32BE(0);
+  return Math.floor((randomNumber / 0xffffffff) * max);
+};
+
+const determineWinOption = async (roundNumber, payableAmount) => {
+  try {
+    const greediesRef = db.collection("greedies");
+    const BATCH_SIZE = 10000; // Firestore's limit
+    let lastDoc = null;
+    const optionTotals = {};
+    let totalBets = 0;
+
+    // Process bets in batches
+    while (true) {
+      let query = greediesRef
+        .where("completed", "==", false)
+        .where("round", "==", roundNumber);
+
+      if (lastDoc) {
+        query = query.startAfter(lastDoc);
+      }
+
+      const roundBets = await query.limit(BATCH_SIZE).get();
+      
+      if (roundBets.empty) {
+        break;
+      }
+
+      // Process current batch
+      roundBets.docs.forEach(doc => {
+        const bet = doc.data();
+        if (!optionTotals[bet.optionId]) {
+          optionTotals[bet.optionId] = { total: 0 };
+        }
+        optionTotals[bet.optionId].total += bet.returnAmount;
+        totalBets++;
+      });
+
+      lastDoc = roundBets.docs[roundBets.docs.length - 1];
+    }
+
+    // If no bets found, return random fallback option
+    if (totalBets === 0) {
+      return FALLBACK_WIN_OPTIONS[getSecureRandomNumber(FALLBACK_WIN_OPTIONS.length)];
+    }
+
+    const payableOptions = Object.entries(optionTotals)
+      .filter(([_, data]) => data.total <= payableAmount)
+      .map(([optionId]) => parseInt(optionId));
+
+    if (payableOptions.length === 0) {
+      const betedIds = Object.keys(optionTotals).map(Number);
+      const fallbackOption = FALLBACK_WIN_OPTIONS.filter(id => !betedIds.includes(id))[0];
+
+      if (fallbackOption) {
+        return fallbackOption;
+      }
+      
+      // If no fallback option is available, find the option with minimum return amount
+      let minOption = null;
+      let minAmount = Infinity;
+      
+      for (const [optionId, data] of Object.entries(optionTotals)) {
+        if (data.total < minAmount) {
+          minAmount = data.total;
+          minOption = parseInt(optionId);
+        }
+      }
+      
+      return minOption || FALLBACK_WIN_OPTIONS[getSecureRandomNumber(FALLBACK_WIN_OPTIONS.length)];
+    }
+
+    return payableOptions[getSecureRandomNumber(payableOptions.length)];
+  } catch (error) {
+    console.error("Error determining win option:", error);
+    return FALLBACK_WIN_OPTIONS[getSecureRandomNumber(FALLBACK_WIN_OPTIONS.length)];
+  }
+};
+
+const selectTimeEmitUpdate = async () => {
+  try {
+    const redisValue = await redisClient.get("greedyObj");
+    const currentObject = JSON.parse(redisValue);
+    const roundNumber = currentObject.round;
+
+    if (currentObject.selectTime <= 0) {
+      await handleGameEnd(currentObject, roundNumber);
+    } else if (currentObject.selectTime === 6) {
+      await handleWinCalculation(currentObject, roundNumber);
+    } else {
+      currentObject.selectTime -= 1;
+      await redisClient.set("greedyObj", JSON.stringify(currentObject));
+      greedy.emit("game", JSON.stringify(currentObject));
+    }
+  } catch (error) {
+    console.error("Error in selectTimeEmitUpdate:", error);
+  }
+};
+
+const handleGameEnd = async (currentObject, roundNumber) => {
+  stopSelectTimeInter();
+  
+  const resultUsers = await processWinners(roundNumber);
+  const winRecords = JSON.parse(await redisClient.get("greedyWinRecourds"));
+
+  greedy.emit("result", {
+    data: JSON.stringify(currentObject),
+    resultUsers,
+    winRecords,
+  });
+
+  // Reset for next round
+  currentObject.selectTime = 30;
+  currentObject.winOption = 0;
+  currentObject.round += 1;
+  await redisClient.set("greedyObj", JSON.stringify(currentObject));
+  
+  setTimeout(startSelectTimeInterval, RESULT_DISPLAY_TIME);
+};
+
+const handleWinCalculation = async (currentObject, roundNumber) => {
+  stopSelectTimeInter();
+  currentObject.selectTime -= 1;
+
+  const metrics = await calculateGameMetrics();
+  const winOption = await determineWinOption(roundNumber, metrics.payableAmount);
+  currentObject.winOption = winOption;
+
+  // Update bet statuses with pagination and batching
+  const BATCH_SIZE = 500; // Firestore batch limit
+  const PAGE_SIZE = 1000; // Safe size for pagination
+  let lastDoc = null;
+
+  while (true) {
+    let query = db.collection("greedies")
+      .where("completed", "==", false)
+      .where("round", "==", roundNumber)
+      .where("status", "==", "pending")
+      .orderBy(FieldPath.documentId()); // For pagination
+
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+
+    const pendingBets = await query.limit(PAGE_SIZE).get();
+    if (pendingBets.empty) break;
+
+    // Process documents in batches
+    const documents = pendingBets.docs;
+    for (let i = 0; i < documents.length; i += BATCH_SIZE) {
+      const batch = db.batch();
+      const chunk = documents.slice(i, i + BATCH_SIZE);
+
+      chunk.forEach(doc => {
+        const betData = doc.data();
+        batch.update(doc.ref, {
+          status: betData.optionId === winOption ? "win" : "loss",
+          paid: betData.optionId === winOption ? false : true,
+        });
+      });
+
+      await batch.commit();
+    }
+
+    lastDoc = documents[documents.length - 1];
+  }
+
+  await updateWinRecords(winOption);
+  await redisClient.set("greedyObj", JSON.stringify(currentObject));
+  greedy.emit("game", JSON.stringify(currentObject));
+
+  setTimeout(startSelectTimeInterval, WIN_CALCULATION_DELAY);
+};
+
+const stopSelectTimeInter = () => clearInterval(selectTimeInterval);
+const startSelectTimeInterval = () => {
   selectTimeInterval = setInterval(selectTimeEmitUpdate, 1000);
-}
+};
 
-let playerUsers = [];
 // Socket.io setup
 greedy.on("connection", (socket) => {
-  console.log("A user socket.handshake.query.userUid ", socket.handshake.query.userUid);
-
-  if (!playerUsers.includes(socket.handshake.query.userUid)) {
-    playerUsers.push(socket.handshake.query.userUid);
-  };
-
-  greedy.emit("playerUsers", playerUsers);
-
+  console.log("User connected to greedy game");
+  
   socket.on("disconnect", () => {
-    console.log("A user disconnected", socket.handshake.query.userUid);
-    const index = playerUsers.indexOf(socket.handshake.query.userUid);
-    if (index !== -1) {
-      playerUsers.splice(index, 1);
-    }
-    greedy.emit("playerUsers", playerUsers);
+    console.log("User disconnected from greedy game");
+  });
+
+  redisClient.get("count").then((value) => {
+    socket.emit("game", value);
   });
 });
 
-module.exports = { greedyObj, greedyWinRecourds };
+// Initialize game interval
+selectTimeInterval = setInterval(selectTimeEmitUpdate, 1000);
+
+module.exports = { greedyObj,greedyWinRecourds };
