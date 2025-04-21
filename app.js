@@ -20,6 +20,7 @@ const { startTimestamp, endTimestamp } = require("./utils/dateGenerate");
 
 const newRoutes = require("./routes/ranking");
 const fcmRoutes = require("./routes/fcm");
+const { teenPattiObj, teenPattiWinRecourds } = require("./src/games/teenPatti");
 
 // Games File
 require("./src/games/greedy");
@@ -61,6 +62,10 @@ server.listen(3000, async () => {
 
   await redisClient.set("fruitTeenPattiObj", JSON.stringify(fruitTeenPattiObj));
   await redisClient.set("fruitTeenPattiWinRecourds", JSON.stringify(fruitTeenPattiWinRecourds));
+
+  // For Teen Patti Game
+  await redisClient.set("teenPattiObj", JSON.stringify(teenPattiObj));
+  await redisClient.set("teenPattiWinRecourds", JSON.stringify(teenPattiWinRecourds));
 
 
 
