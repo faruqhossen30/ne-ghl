@@ -60,8 +60,8 @@ server.listen(3000, async () => {
 
   // For Fruits Teen Patti Game
 
-  // await redisClient.set("fruitTeenPattiObj", JSON.stringify(fruitTeenPattiObj));
-  // await redisClient.set("fruitTeenPattiWinRecourds", JSON.stringify(fruitTeenPattiWinRecourds));
+  await redisClient.set("fruitTeenPattiObj", JSON.stringify(fruitTeenPattiObj));
+  await redisClient.set("fruitTeenPattiWinRecourds", JSON.stringify(fruitTeenPattiWinRecourds));
 
   // For Teen Patti Game
   await redisClient.set("teenPattiObj", JSON.stringify(teenPattiObj));
