@@ -12,7 +12,7 @@ const { FieldValue, AggregateField } = require("firebase-admin/firestore");
 const { redisClient, radisURL } = require("./config/redis");
 const { app, express, server } = require("./config/server");
 const { io } = require("./config/socket");
-const { greedyObj, greedyWinRecourds } = require("./src/games/greedy");
+// const { greedyObj, greedyWinRecourds } = require("./src/games/greedy");
 const { fruitTeenPattiObj, fruitTeenPattiWinRecourds } = require("./src/games/fruitTeenPatti");
 const greddyGenerateWInPtion = require("./utils/greedyGenerateWinOption");
 const { db } = require("./config/firebaseDB");
@@ -20,10 +20,10 @@ const { startTimestamp, endTimestamp } = require("./utils/dateGenerate");
 
 const newRoutes = require("./routes/ranking");
 const fcmRoutes = require("./routes/fcm");
-const { teenPattiObj, teenPattiWinRecourds } = require("./src/games/teenPatti");
+// const { teenPattiObj, teenPattiWinRecourds } = require("./src/games/teenPatti");
 
 // Games File
-require("./src/games/greedy");
+// require("./src/games/greedy");
 
 // Express Middleware
 app.set("view engine", "ejs");
@@ -55,8 +55,8 @@ server.listen(3000, async () => {
 
   // For Greedy Game
 
-  await redisClient.set("greedyObj", JSON.stringify(greedyObj));
-  await redisClient.set("greedyWinRecourds", JSON.stringify(greedyWinRecourds));
+  // await redisClient.set("greedyObj", JSON.stringify(greedyObj));
+  // await redisClient.set("greedyWinRecourds", JSON.stringify(greedyWinRecourds));
 
   // For Fruits Teen Patti Game
 
@@ -64,8 +64,8 @@ server.listen(3000, async () => {
   await redisClient.set("fruitTeenPattiWinRecourds", JSON.stringify(fruitTeenPattiWinRecourds));
 
   // For Teen Patti Game
-  await redisClient.set("teenPattiObj", JSON.stringify(teenPattiObj));
-  await redisClient.set("teenPattiWinRecourds", JSON.stringify(teenPattiWinRecourds));
+  // await redisClient.set("teenPattiObj", JSON.stringify(teenPattiObj));
+  // await redisClient.set("teenPattiWinRecourds", JSON.stringify(teenPattiWinRecourds));
 
 
 
